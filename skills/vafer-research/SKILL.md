@@ -28,23 +28,23 @@ Note today's date. If `.vafer/research/INDEX.md` exists, search it for this topi
 | Standard | Three or more sub-questions, a comparison, a recent, niche or local topic, or a written report | plan.md, parallel researchers when the work splits, an early draft, one gap wave |
 | Deep | Exhaustive lists, many entities, contested high-stakes decisions, multi-domain synthesis, or an explicit request | Standard with more researchers and up to two gap waves |
 
-A tier stated by the user or by a plan wins. Announce the tier in one line. Move up a tier when the first searches show conflict, facts newer than your training, obscure entities or a list-shaped answer; move down when a primary source already answers. In an interactive session, ask at most three clarifying questions, and only when the answers would change what you search.
+A tier stated by the user or by a plan wins. A bare topic with no further question, such as the history of a town, starts as Quick; offer to go deeper on any part afterwards. Announce the tier in one line. Move up a tier when the first searches show conflict, facts newer than your training, obscure entities or a list-shaped answer; move down when a primary source already answers. In an interactive session, ask at most three clarifying questions, and only when the answers would change what you search.
 
 ## Quick
 
-Run one parallel batch of short searches, open the two to five most authoritative results, and answer in chat with inline links and the as-of date. When sources conflict, escalate instead of guessing.
+Run one parallel batch of short searches, open the two to five most authoritative results, and answer in chat with inline links and the as-of date. For a topic overview, organize the answer by its main parts (periods, components or sides) with dates. When sources conflict, escalate instead of guessing.
 
 ## Standard and Deep
 
-1. **Plan.** Create the run folder (see Files) and write `plan.md`, at most 800 words: the question verbatim, the decision it informs, the as-of date, tier, budget and deadline; what done means for this question; 4–10 checklist items, including needs an expert would expect without being told; up to five working assumptions tagged `[prior]`, each with what would confirm or overturn it. Only you edit plan.md, and you rewrite it each round rather than appending.
+1. **Plan.** Create the run folder (see Files) and write `plan.md`, at most 800 words: the question verbatim, the decision it informs, the as-of date and tier; what done means for this question; 4–10 checklist items, including needs an expert would expect without being told; up to five working assumptions tagged `[prior]`, each with what would confirm or overturn it. Only you edit plan.md, and you rewrite it each round rather than appending.
 2. **Scout.** Send one parallel batch of 4–8 short queries: one per checklist item, one aimed at primary records and one at criticism, in the languages where the best sources are. Open one to three central pages, then re-tier if needed.
 3. **Wave 1.** If at least three sub-questions are independent and each needs more than three tool calls, spawn one researcher subagent per sub-question in a single message (Standard 3–5, Deep 6–10 in batches), each with a brief from `references/briefs.md`; wait for all, then read their summaries. Otherwise research the items yourself. In the same message, spawn one gap-finder that sees only the question, the as-of date and the scope.
 4. **Integrate and draft.** Mark each checklist row COVERED (one primary or two independent sources), PARTIAL, CONFLICT, OPEN or NOT-FOUND (with the queries tried), and add gap-finder items the plan lacks. Write a first `report.md` now: one section per checklist group, `[GAP]` where evidence is missing, priors shown as unconfirmed.
-5. **Gap wave.** Aim targeted researchers, or your own searches, at OPEN, PARTIAL and CONFLICT rows and `[GAP]` markers: one wave in Standard (up to 3 researchers), two in Deep (up to 6 each). Stop gathering when every required row is COVERED, CONFLICT or NOT-FOUND, when a wave adds fewer than two material facts, or when 70% of the budget is spent. A page that looks like an answer is not a reason to stop.
-6. **Write.** Revise the report section by section, loading only that section's notes. Keep inference apart from findings. Add "Where sources disagree", "Not established" (with the queries tried) and a short method note: tier, minutes, searches, subagents, search mode. Write the reuse notes into plan.md now.
+5. **Gap wave.** Aim targeted researchers, or your own searches, at OPEN, PARTIAL and CONFLICT rows and `[GAP]` markers: one wave in Standard (up to 3 researchers), two in Deep (up to 6 each). Stop gathering when every required row is COVERED, CONFLICT or NOT-FOUND, or when a wave adds fewer than two material facts. A page that looks like an answer is not a reason to stop.
+6. **Write.** Revise the report section by section, loading only that section's notes. Keep inference apart from findings. Add "Where sources disagree", "Not established" (with the queries tried) and a short method note: tier, searches, subagents, search mode. Then re-open the sources behind the headline numbers, dates and quotes, up to ten, and confirm each page says it; correct or mark what does not. Write the reuse notes into plan.md now.
 7. **Deliver.** Reply with a 5–10 line answer, the report path, the scope and the main gaps, then append one line to INDEX.md. Nothing else runs after the report.
 
-Keep at least a quarter of the time budget for steps 6 and 7. Put `budget N calls / M minutes, started HH:MM` in every brief and check the clock once per round.
+There is no time limit. A researcher stops when its assignment is answered, or when what remains is not found after the queries it tried.
 
 ## Research rules
 

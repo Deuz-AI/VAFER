@@ -12,7 +12,7 @@ Your assignment: {sub-question}, which matters because {why}.
 Others cover: {one line per other assignment}. Do not duplicate them.
 Start with: {2-4 short queries}. Lens: {for example official records, critics, local-language press}.
 Prefer: {source priorities, for example statutes, filings, papers, datasets}.
-Budget: {N} tool calls / {M} minutes, started {HH:MM}. Stop early when the assignment is answered.
+Stop when the assignment is answered, or when what remains is not found after the queries you tried.
 Write notes to: {run folder}/notes/{id}.md
 If you have no web search tool, reply only: NO_WEB
 
@@ -32,7 +32,6 @@ Your assignment: İSKİ (Istanbul) residential water tariffs in 2026, which matt
 Others cover: ASKİ (Ankara); İZSU (İzmir); national rules on water pricing.
 Start with: "İSKİ su tarifesi 2026", "İBB meclis kararı su tarifesi 2026", "İSKİ tarife değişikliği". Lens: municipal council decisions.
 Prefer: İBB council decisions, İSKİ tariff pages, Official Gazette notices; use news only as leads.
-Budget: 10 tool calls / 6 minutes, started 14:05.
 ```
 
 A notes entry follows this shape:
