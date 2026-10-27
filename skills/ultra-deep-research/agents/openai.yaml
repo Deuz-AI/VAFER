@@ -1,4 +1,0 @@
-interface:
-  display_name: "Ultra Deep Research"
-  short_description: "Build detailed, source-linked subject knowledge"
-  default_prompt: "Use $ultra-deep-research to study this subject in depth and preserve evidence for detailed follow-up questions."

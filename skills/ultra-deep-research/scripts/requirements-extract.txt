@@ -1,3 +1,0 @@
-# Optional: install only when these document formats require local extraction.
-pypdf>=5,<7
-trafilatura>=2,<3
