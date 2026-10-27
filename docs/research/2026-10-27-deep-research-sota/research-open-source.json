@@ -1,0 +1,924 @@
+{
+ "key": "open-source",
+ "topic": "Open-source deep-research agents and frameworks: architectures, benchmark-backed design choices, the hyperresearch Claude Code/Codex harness, and existing deep-research skills for Claude Code and Codex",
+ "summary": "The open-source design choices that have ablation or controlled-comparison support all give the model more evidence, or organize that evidence better. Examples: perspective-guided questions asked after reading (STORM: 99.8 vs 39.6 unique sources), isolated parallel sub-researchers (LangChain ODR; Anthropic: token use explains 80% of BrowseComp variance), draft-first denoising (TTD-DR: 69-75% win rate vs OpenAI DR), rebuilding a small workspace every round (IterResearch: +12.7 to +19.2pp over ReAct as a pure prompting strategy), outlines linked to evidence with section-by-section writing from cited evidence only (WebWeaver: insight 42.7 to 50.0, citation accuracy 86.7 to 93.4), and verification that sends the agent back to search (PANINI-DR +16 pts; MiroThinker-H1 +14.2). Structure that constrains the model shows no gain or does harm: fixed sections, parallel section writing, piling everything into one context, prose-only gates. LangChain and Tongyi both say outright that they removed such structure ('bitter lesson'). The 2026 leaderboards (DeepResearch Bench with GPT-5.5 judge, DRB II, DRACO) show presentation is close to saturated and the headroom is in information recall and factual accuracy. That is exactly where VAFER's bookkeeping adds nothing. hyperresearch (4.1k stars) is also an evidence store, but it is a capability layer. It fetches full text itself, keeps a cross-session vault, runs parallel fetchers over 55-250 sources, writes 3 drafts plus critics, edits by patch only, and enforces its ship gate in code. Its only comparative evidence is a vendor-run 10-task DRACO board (77.7 vs Claude Research 73.0, grader noise up to ~9 pts), with no bare-Claude-Code baseline. Many Claude Code/Codex research skills exist, but almost none publish controlled results. The one with a bare-prompt A/B (hec-ovi, 3 DRB-II tasks, Haiku) found +8 weighted points, carried by information recall. Recommendation for VAFER: keep an evidence store but turn it into a research engine. That means fetching raw text instead of lossy WebFetch, parallel subagents with diverse lenses, delegation driven by gaps, a verify-then-research loop, section-wise writing from cited passages, and project memory. Drop the ceremony from the default path, and re-evaluate on recall-heavy, non-famous tasks.",
+ "findings": [
+  {
+   "claim": "STORM's perspective-guided, conversational (read-then-ask) question generation roughly doubles distinct sources at equal question count",
+   "date": "2024-02 (NAACL 2024; GPT-3.5/GPT-4 era, may be superseded)",
+   "detail": "Unique references: full STORM 99.83 vs w/o Perspective 54.36 vs w/o Conversation 39.56 (Table 5). GPT-4 outline heading entity recall 45.91 vs 42.70 vs 39.30. Authors: 'reading relevant information is crucial to generating effective questions'",
+   "url": "https://arxiv.org/abs/2402.14207",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "An outline stage matters, and STORM beats outline-driven RAG on organization and coverage but not on verifiability",
+   "date": "2024-02",
+   "detail": "Without the outline stage, article entity recall fell 14.10 to 7.39 and ROUGE-1 45.82 to 26.77. Human eval (20 pairs, 10 Wikipedia editors): organized >=4 70% vs 45% (p=0.005), coverage 67.5% vs 57.5% (p=0.084), verifiability 3.80 vs 3.85 (no gain), preferred 26 vs 14",
+   "url": "https://arxiv.org/abs/2402.14207",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Co-STORM (LLM experts + moderator + dynamic mind map) is preferred by users over search and RAG chat",
+   "date": "2024-08 (EMNLP 2024)",
+   "detail": "70% of participants preferred it over a search engine and 78% over a RAG chatbot. The moderator asks questions grounded in retrieved but unused information",
+   "url": "https://arxiv.org/abs/2408.15232",
+   "evidence_type": "ab-test",
+   "strength": "weak"
+  },
+  {
+   "claim": "LangChain ODR: subagents writing report sections in parallel produced disjoint reports; multi-agent works only for research, with one-shot writing at the end",
+   "date": "2025-07-16",
+   "detail": "'Earlier versions ... wrote sections of the final report in parallel ... the reports were disjoint'. Fix: supervisor delegates subtopics to isolated-context researchers, then one final LLM call writes from brief + findings",
+   "url": "https://blog.langchain.com/open-deep-research/",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "A single agent covering several subtopics researches each less deeply and suffers context clash",
+   "date": "2025-07-16",
+   "detail": "In their evals a single agent 'would naturally research each topic less deeply (# of search queries) before choosing to finish'. Subagent context isolation fixed this. Compression keeps findings verbatim ('DO NOT summarize')",
+   "url": "https://blog.langchain.com/open-deep-research/",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "ODR benchmark numbers depend heavily on the backbone model and cost",
+   "date": "2025-08",
+   "detail": "RACE (Gemini-2.5-pro judge): defaults GPT-4.1 0.4309 ($45.98, 58M tokens). Claude Sonnet 4 0.4401 ($187.09). GPT-5 0.4943. Ranked #6 at 0.4344 on 2025-08-02. Defaults: 5 concurrent research units, 6 supervisor iterations, 10 tool calls per researcher",
+   "url": "https://github.com/langchain-ai/open_deep_research",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "ODR's author attributes the gains to removing imposed structure (fixed section decomposition, no tool calls, parallel section writing)",
+   "date": "2025-07-30",
+   "detail": "'we often fail to remove all the structure we add'. The final design (flexible research, one-shot write) scored 43.5 on DRB. Lessons: 're-evaluate structure as models improve', 'make it easy to remove structure'",
+   "url": "https://rlancemartin.github.io/2025/07/30/bitter_lesson/",
+   "evidence_type": "expert-opinion",
+   "strength": "moderate"
+  },
+  {
+   "claim": "HF smolagents Open Deep Research: code actions beat JSON tool calls by a wide margin on GAIA",
+   "date": "2025-02-04 (superseded by later agents)",
+   "detail": "GAIA validation 55.15% with a CodeAgent vs 'instantly degraded to 33%' with JSON actions in the same setup. Previous open SOTA was Magentic-One ~46%. OpenAI DR reported 67.36%",
+   "url": "https://huggingface.co/blog/open-deep-research",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Fluency outpaces coverage: report-quality scores far exceed key-point recall for open systems",
+   "date": "2025-05",
+   "detail": "DeepResearchGym: GPT-Researcher KPR 60.61 vs perplexity-sonar-deepsearch 72.50, while GPT-Researcher clarity 86.37 / insight 81.52. HF-DeepSearch KPR 33.00. 'linguistic fluency has outpaced comprehensive content synthesis'",
+   "url": "https://arxiv.org/abs/2505.19253",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Draft-first 'denoising with retrieval' (TTD-DR) gives large long-form gains on top of component self-evolution",
+   "date": "2025-07-21",
+   "detail": "Win rate vs OpenAI DR: 69.1% (LongForm, 205 queries) and 74.5% (DeepConsult). Backbone + self-evolution only: 60.9% / 59.8%. GPT-Researcher: 18.3% on LongForm. Judge aligned to human ratings on 200 reports. Gemini-2.5-pro, max 20 denoising steps",
+   "url": "https://arxiv.org/abs/2507.16075",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "WebThinker: interleaved drafting and deep link-following explorer are the largest contributors",
+   "date": "2025-04-30",
+   "detail": "Report score (Glaive, LLM judges): full 8.1. W/o autonomous report draft 6.6. W/o check&edit 7.7 (coherence 7.9 to 6.9). Problem-solving avg 45.4 drops to 38.3 w/o Deep Web Explorer and to 42.6 w/o link clicking (QwQ-32B)",
+   "url": "https://arxiv.org/abs/2504.21776",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "WebWeaver: an evidence memory bank pays off when it drives a dynamic cited outline and section-by-section writing with targeted retrieval",
+   "date": "2025-09-16",
+   "detail": "Claude Sonnet 4. Hierarchical writing vs brute-force (whole memory bank): insight 42.72 to 50.02, readability 43.82 to 49.79, citation accuracy 86.73 to 93.37. Outline optimization rounds: comprehensiveness 48.85 to 50.82. RACE 50.58 (Gemini judge), 200.75 effective citations",
+   "url": "https://arxiv.org/abs/2509.13312",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "IterResearch workspace reconstruction works as a training-free prompting strategy for frontier models",
+   "date": "2025-11-10",
+   "detail": "State = question + evolving report + last action/observation only. Vs ReAct on BrowseComp: o3 +12.7pp, DeepSeek-V3.1 +19.2pp. Interaction scaling 2 to 2048 turns: 3.5% to 42.5% (abstract; Sec 4.4 gives 5.5 to 50.1% on BC-200); avg 80.1 turns used. Short-answer tasks only",
+   "url": "https://arxiv.org/abs/2511.07327",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Tongyi DeepResearch: parallel context-managed researchers + synthesis (Heavy mode) beat single ReAct, but a browsing-optimized model is weak on long reports",
+   "date": "2025-09/10",
+   "detail": "ReAct: HLE 32.9, BrowseComp 43.4, BC-ZH 46.7. Heavy (IterResearch-based Research-Synthesis): HLE 38.3, BC 58.3, BC-ZH 58.1. Yet tongyi-deepresearch-30B-A3B scores only 40.46 RACE on DeepResearch Bench (Gemini judge). The team chose ReAct citing 'The Bitter Lesson'",
+   "url": "https://arxiv.org/abs/2510.24701",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "MiroThinker-H1: verification inside the loop that forces more evidence gathering gives large gains and fewer steps",
+   "date": "2026-03-16",
+   "detail": "Local verifier on hard BrowseComp subset (295 q): 32.1 to 58.5 pass@1, steps 1185 to 211. Global verifier (resample if evidence insufficient): BrowseComp +14.2, Seal-0 +8.3, HLE +4.8. 16x compute 85.9, 64x 88.2. H1 is proprietary",
+   "url": "https://arxiv.org/abs/2603.15726",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "MiroThinker/MiroFlow context practice and headline numbers",
+   "date": "2025-11 to 2026-03",
+   "detail": "Recommended configs keep only the 5 most recent tool results (max 200-300 turns). Page scraping uses a small summary LLM with 'minimal impact' on performance. MiroFlow headline GAIA-val 82.4% vs its published trace at 73.94% pass@1, so the reported number depends on aggregation",
+   "url": "https://github.com/MiroMindAI/MiroThinker",
+   "evidence_type": "documented-design",
+   "strength": "weak"
+  },
+  {
+   "claim": "RhinoInsight: a verifiable checklist from the query plus an evidence audit bound to outline nodes are complementary",
+   "date": "2025-11-24",
+   "detail": "DeepConsult win rate: neither 18.14%, checklist only 30.12%, evidence audit only 31.24%, both 68.51%. GAIA-text-103: 58.3 to 68.9. DRB RACE 50.92. Training-free control mechanisms",
+   "url": "https://arxiv.org/abs/2511.18743",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "PANINI-DR: with backbone and corpus fixed, harness design alone moves accuracy by 16+ points; structured state and verify-before-reuse each add about 16",
+   "date": "2026-10-10",
+   "detail": "gpt-oss-120b, frozen corpora, 7 harnesses. BrowseComp-Plus 73.3% vs SLEUTH 57.3, IterResearch 54.7, Open Deep Search 53.3. Plan + persistent findings vs prose notes: 41.3 to 58.0. Verifier with retries: +16.0. New entities followed up: 77.4% vs 32.1%. SLEUTH majority@8 (1.12x compute) reaches 64.7%",
+   "url": "https://arxiv.org/abs/2610.15208",
+   "evidence_type": "ablation",
+   "strength": "strong"
+  },
+  {
+   "claim": "Answer correctness alone overrates harnesses, because models answer from memory; 'observed support' from saved evidence re-ranks them",
+   "date": "2026-10-10",
+   "detail": "Observed support (answer credit recoverable from saved evidence): PANINI 70.7 vs SLEUTH 54.0 vs IterResearch 51.3 on BCP. In a common-reader test the same reader answered best from PANINI's saved evidence",
+   "url": "https://arxiv.org/abs/2610.15208",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Anthropic multi-agent Research: orchestrator + parallel subagents win mainly by spending more tokens in parallel",
+   "date": "2025-06-13",
+   "detail": "Opus 4 lead + Sonnet 4 subagents beat single-agent Opus 4 by 90.2% on an internal eval. Token usage explains 80% of BrowseComp variance (95% with tool calls + model). About 15x chat tokens. 3-5 parallel subagents with 3+ parallel tool calls cut time by up to 90%. Effort rules: 1 agent / 3-10 calls for simple, 2-4 subagents / 10-15 calls for comparisons",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Jina node-DeepResearch: a FIFO queue of gap questions beat recursion; answer evaluation must be separate from generation",
+   "date": "2025-02-25",
+   "detail": "Recursion was 'very hard to apply budget-forcing to'. Per-criterion evaluator with few-shots; after a rejected answer the answer action is disabled. Embeddings proved most useful for query dedup. Their unreleased long-report 'Re-search' was judged 'useless' (hallucinations, redundancy)",
+   "url": "https://jina.ai/news/a-practical-guide-to-implementing-deepsearch-deepresearch",
+   "evidence_type": "documented-design",
+   "strength": "weak"
+  },
+  {
+   "claim": "dzhng/deep-research (19.8k stars): minimal breadth/depth recursion with no per-claim attribution",
+   "date": "2025 (pushed 2026-04)",
+   "detail": "Default breadth 4, depth 2. Breadth halves each level (ceil(B/2)). 5 results per search, at most 3 'learnings' each (entities, exact numbers, dates) plus follow-up questions. One-shot report from learnings, then all visited URLs appended as a flat '## Sources' list. No published eval",
+   "url": "https://github.com/dzhng/deep-research",
+   "evidence_type": "documented-design",
+   "strength": "weak"
+  },
+  {
+   "claim": "GPT-Researcher (30.3k stars): planner/execution/publisher plus tree-like deep mode; competitive on fluency, weak in head-to-head long-form",
+   "date": "2025-2026",
+   "detail": "Planner writes questions, crawler agents gather (>20 sources), publisher aggregates. Truth heuristic is 'choosing the most frequent information'. Third-party: 18.3% win rate vs OpenAI DR on TTD-DR LongForm. Its Codex 'skill' is a 317-byte MCP pointer",
+   "url": "https://github.com/assafelovic/gpt-researcher",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "II-Researcher: strong short-answer accuracy; over-compressing page content hurts",
+   "date": "2025-06",
+   "detail": "FRAMES 84.12% with DeepSeek-R1-0528. Hybrid compression (embedding filter, then LLM chunk ranking, word cap per site). Blog: 'over-compressing or omitting necessary information can significantly degrade pipeline performance'",
+   "url": "https://github.com/Intelligent-Internet/ii-researcher",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak"
+  },
+  {
+   "claim": "DeepResearch Bench changed judges in 2026, so 2025 RACE numbers are not comparable with current ones; current open-source leaders are small harnesses",
+   "date": "2026-05 to 2026-10",
+   "detail": "GPT-5.5 judge: 71.82% agreement with humans vs 68.78% human-human. GPT-5.5 board: cellcog-max 56.72, ATH-Voicepica 55.99, deep-cove-research-pro 55.71 ($2.50/report), Deep-Dog-2 54.32 (MIT, top open source), lunon 53.51 (MIT), OpenAI DR 47.84. Reference report = 50",
+   "url": "https://huggingface.co/spaces/muset-ai/DeepResearch-Bench-Leaderboard",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "DeepResearch Bench II: information recall is the weakest axis and where top harnesses beat lab products",
+   "date": "2026",
+   "detail": "GPT-5.5 eval, 130 tasks: SPIA 58.97 (recall 54.71, analysis 66.03, presentation 87.98) vs GPT-o3 Deep Research 43.12 (recall 38.18). Presentation 72-88 for all systems, i.e. near saturation",
+   "url": "https://huggingface.co/spaces/muset-ai/DeepResearch-Bench-Leaderboard",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Deep Dog 2 reached top open-source DRB with a 15-minute budget, using draft-first and gap-driven delegation",
+   "date": "2026-09",
+   "detail": "54.32 RACE (GPT-5.5 judge) with max 3 Exa searches per subagent, 15 min, 20 iterations, DeepSeek V4. Supervisor marks sections COVERED/PARTIAL/UNSUPPORTED/CONTRADICTED and delegates only gaps tied to named shortcomings. Code ignores ResearchComplete while the verdict is CONTINUE_RESEARCH and time remains. No ablation",
+   "url": "https://beneadie01.substack.com/p/deep-dog-2-how-reflection-delegation",
+   "evidence_type": "documented-design",
+   "strength": "weak"
+  },
+  {
+   "claim": "hyperresearch workflow: a router skill loads 16 step skills just in time; full text lands in a persistent vault; patch-only editing after synthesis",
+   "date": "commit 9c16854 2026-10-10; main +5 fix-only commits on 2026-10-26",
+   "detail": "Light tier 1-2-10-15-16 (~30-40 min). Full tier: decompose, 3-lens width sweep with 8-12 parallel fetchers, loci, depth investigators, contradiction graph, corpus critic, triple draft + synthesizer, 4 critics, Read+Edit-locked patcher, cite-check, polish (1.5-2.5 h, 55-80 sources; premier 100-130). PreToolUse hook steers WebFetch to its own fetcher and vault search first",
+   "url": "https://github.com/jordan-gibbs/hyperresearch/tree/9c16854fed2d345a557e8759156a2ca5d02fa4f4",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "hyperresearch's comparative evidence is vendor-run, small, and noisy, with no bare Claude Code baseline",
+   "date": "2026-10-06",
+   "detail": "DRACO, 10 of 100 tasks, GPT-5.2 judge: Hyperresearch Deep 77.7 vs Claude Research (Opus) 73.0, ChatGPT DR 55.2, Gemini DR 54.7. 'Two grades of the same report can differ by up to about 9 points'. Finance/Academic/Law reports were regenerated by their 'current Deep writer'. Codex port not benchmarked",
+   "url": "https://hyperresearch.ai/benchmarks/draco",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak"
+  },
+  {
+   "claim": "Prose-only pipeline gates fail in practice; hyperresearch moved its gates into code and hooks",
+   "date": "2026-07 to 2026-10",
+   "detail": "First premier run: the orchestrator never ran verify (shipped 25,647 words vs a 16K ceiling) and dismissed 24 flagged hallucinated quotes with a self-written 'false positives' memo. An April 2026 Codex bench 'answered every query inline and wrote zero vault notes'. Fixes: 'run finish' gate and a Codex Stop hook",
+   "url": "https://github.com/jordan-gibbs/hyperresearch/blob/main/CHANGELOG.md",
+   "evidence_type": "anecdote",
+   "strength": "moderate"
+  },
+  {
+   "claim": "LLM-judged report scores are sensitive to register and style",
+   "date": "2026-07-23",
+   "detail": "hyperresearch CHANGELOG: 'the judge prices register heavily (+2.5 RACE from register alone)'. On Q62 the judge's only consistent losses were pedagogy/audience adaptation, which led them to add section primers",
+   "url": "https://github.com/jordan-gibbs/hyperresearch/blob/main/CHANGELOG.md",
+   "evidence_type": "anecdote",
+   "strength": "weak"
+  },
+  {
+   "claim": "The only bare-prompt vs skill A/B found for a Claude Code/Codex research skill shows gains driven by recall",
+   "date": "2026-07-23",
+   "detail": "hec-ovi/research-skill on 3 DRB-II tasks, Haiku 4.5 writer, Opus 4.8 judge: skill 64.2 vs bare 56.2 weighted; info recall 55.5% vs 41.9%; analysis 65.9% vs 58.0%. A Sonnet arm scored lower (57.5) because one blocked-source attribution voided 30 rubric items",
+   "url": "https://github.com/hec-ovi/research-skill",
+   "evidence_type": "ab-test",
+   "strength": "weak"
+  },
+  {
+   "claim": "Claude Code's WebFetch is lossy by design; raw page text needs curl through the shell",
+   "date": "2026 (current docs)",
+   "detail": "'Claude receives the result of that call rather than the raw page ... WebFetch lossy by design ... use curl via Bash for the unprocessed page'. Reads up to 100,000 chars per call. WebSearch returns titles + URLs only. Limit of 200 WebSearch calls per session, shared with subagents",
+   "url": "https://code.claude.com/docs/en/tools-reference.md",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "The most common deep-research failures are fabrication and insufficient information acquisition",
+   "date": "2025-12-01",
+   "detail": "DEFT taxonomy on ~1,000 reports: strategic content fabrication 18.95%, insufficient external information acquisition 16.30%, lack of analytical depth 11.09%, content specification deviation 10.73%, failure to understand requirements 10.55%, verification mechanism failure 8.72%",
+   "url": "https://arxiv.org/abs/2512.01948",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Search-as-Code skill for Codex: mostly an efficiency gain, with a small and uncertain quality gain",
+   "date": "2026-10-19",
+   "detail": "OpenSaC vs native Codex web search (gpt-5.6-luna xhigh): BrowseComp +2.96pp (14 vs 9 discordant on 169 paired tasks), -30.3% time, -37.8% tokens. WideSearch -29.5% time, slightly lower row F1. Uses Serper/Jina backends",
+   "url": "https://arxiv.org/abs/2610.25779",
+   "evidence_type": "ab-test",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Synthesizing several candidate answers through a structured analyst state helps only slightly",
+   "date": "2026-04-03",
+   "detail": "LLM Council on 100 DRACO tasks (closed-book): +1.87 vs direct fusion (95% CI 0.33 to 3.48); +0.47 vs Claude (CI -0.69 to 1.61, not significant)",
+   "url": "https://arxiv.org/abs/2604.02923",
+   "evidence_type": "ab-test",
+   "strength": "moderate"
+  },
+  {
+   "claim": "DRACO is built to resist ceiling effects and to penalize wrong claims",
+   "date": "2026-02-12",
+   "detail": "100 tasks from hard Perplexity DR queries (thumbs-down or negative sentiment). 39.3 criteria per task, ~20.5 of them factual accuracy. 415 of 3,934 criteria are negative. Tasks were returned for rework if Perplexity DR scored >90%",
+   "url": "https://arxiv.org/abs/2602.11685",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Agents judge the consequences of their own prior actions worse ('inertia bias'); isolating context at triage and validation helps",
+   "date": "2026-08-24",
+   "detail": "NIS-Agent isolates context at webpage triage and final-answer validation. Competitive on GAIA/WebWalkerQA/BrowseComp with 33% lower token cost than its baseline",
+   "url": "https://arxiv.org/abs/2608.23045",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Parallel rollouts duplicate evidence; dispatching searchers to missing pieces of a shared evidence graph scales better",
+   "date": "2026-05-15",
+   "detail": "Argus: +5.5 with 1 Searcher, +12.7 with 8 parallel Searchers (avg over 8 benchmarks). 64 Searchers reach 86.2 on BrowseComp, with Navigator context under 21.5K tokens. Trained 35B-A3B model",
+   "url": "https://arxiv.org/abs/2605.16217",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Popular Claude Code/Codex research skills compete on new data channels or on long phase pipelines, almost none with measured comparisons",
+   "date": "2026-10-27 (GitHub search)",
+   "detail": "last30days-skill (65.6k stars) adds Reddit/X/YouTube/HN/Polymarket/GitHub (several keyless) with no eval. 199-biotech (1.2k), deepdive (368, 13 phases, eval harness without published results) and Weizhena (2.4k, RhinoInsight-inspired) have no published comparisons. anthropics/skills and openai/skills contain no general deep-research skill",
+   "url": "https://github.com/mvanhorn/last30days-skill",
+   "evidence_type": "anecdote",
+   "strength": "weak"
+  }
+ ],
+ "techniques": [
+  {
+   "name": "Lens-diverse question generation after reading (STORM / hyperresearch 3 lenses)",
+   "description": "Generate queries per sub-question from several perspectives (basic facts, stakeholder or expert personas, depth, adversarial or contrarian), and generate follow-up questions only after reading answers, not all up front.",
+   "evidence": "STORM ablation: 99.8 vs 54.4 (no perspective) vs 39.6 (no conversation) unique sources at equal question count. hyperresearch calls its 3-lens search plan 'the single highest-leverage step for comprehensiveness' (design claim, no ablation).",
+   "applicability": "The orchestrator writes a lens x sub-question search plan into state, then gives each subagent one lens plus its sub-questions. Follow-ups come from what was read. Works on both hosts with WebSearch / web_search.",
+   "cost_or_risk": "More searches against the 200-per-session WebSearch cap. Persona prompts can drift off-scope without an anchor to the brief.",
+   "urls": [
+    "https://arxiv.org/abs/2402.14207",
+    "https://github.com/jordan-gibbs/hyperresearch/tree/9c16854fed2d345a557e8759156a2ca5d02fa4f4"
+   ]
+  },
+  {
+   "name": "Supervisor + parallel isolated researchers with delegation contracts",
+   "description": "The lead agent splits the brief into non-overlapping subtopics. Each subagent gets an objective, an output format, source guidance and boundaries, researches in its own context, and returns compressed findings with sources. The lead reflects and re-delegates only for gaps.",
+   "evidence": "Anthropic: +90.2% vs single agent (internal); token use explains 80% of BrowseComp variance; parallelism cut time by up to 90%. LangChain: single-agent multi-topic research is shallower. Deep Dog 2: 54.32 DRB with 15 min.",
+   "applicability": "Claude Code Task/Agent subagents (3-5 in parallel); Codex custom agents where available, with an inline fallback on the same state file. This is the main way to add information inside a 720 s cap.",
+   "cost_or_risk": "About 15x tokens. Duplicated work if task descriptions are vague. Over-spawning on simple queries. Codex has no per-agent tool allowlists.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://blog.langchain.com/open-deep-research/",
+    "https://beneadie01.substack.com/p/deep-dog-2-how-reflection-delegation"
+   ]
+  },
+  {
+   "name": "Verbatim-preserving compression and file-based handoff",
+   "description": "Subagents return cleaned but verbatim findings (numbers, quotes, URLs) or write them to files, so the lead does not play a 'game of telephone' and the final writer can open the chosen sources directly.",
+   "evidence": "ODR compress prompt ('DO NOT summarize ... preserved verbatim'). Anthropic recommends subagent outputs to the filesystem. II-Researcher: over-compression degrades performance. Design evidence, no ablation.",
+   "applicability": "Each subagent writes findings/<id>.md with source URLs and quote spans to the run dir and returns a short summary. The VAFER helper can index these files.",
+   "cost_or_risk": "Larger files. The writer must still be selective about what it loads.",
+   "urls": [
+    "https://github.com/langchain-ai/open_deep_research",
+    "https://www.anthropic.com/engineering/multi-agent-research-system"
+   ]
+  },
+  {
+   "name": "Workspace reconstruction / evolving report (IterResearch)",
+   "description": "Each round, rebuild a small state: question, evolving report or draft, open gaps, last action and result. Rewrite it rather than append, and drop dead ends.",
+   "evidence": "+12.7pp (o3) and +19.2pp (DeepSeek-V3.1) over ReAct on BrowseComp as a pure prompting strategy. Tongyi Heavy mode builds on it. Short-answer tasks only.",
+   "applicability": "A state.md (size-capped) that the orchestrator overwrites each round and that subagents read. Survives compaction. It is also the natural object to hand to the Memory and Plan modules.",
+   "cost_or_risk": "Strategic forgetting can drop facts that turn out to matter, so raw findings must stay on disk.",
+   "urls": [
+    "https://arxiv.org/abs/2511.07327",
+    "https://arxiv.org/abs/2510.24701"
+   ]
+  },
+  {
+   "name": "Draft-first denoising",
+   "description": "Write a skeleton draft (with RESEARCH_NEEDED placeholders, not treated as evidence) early. Use its gaps to generate searches and revise it with each batch of evidence. Write the final report from the revised draft plus evidence.",
+   "evidence": "TTD-DR: 69.1% / 74.5% win rate vs OpenAI DR, with self-evolution alone at 60.9% / 59.8%. WebThinker: dropping autonomous drafting cut the report score from 8.1 to 6.6. Deep Dog 2 and ThinkDepth lead open-source DRB with it.",
+   "applicability": "Orchestrator-level prompt pattern; no tools beyond files.",
+   "cost_or_risk": "The draft can anchor the research toward the model's priors. Mitigate by marking draft claims as hypotheses to test.",
+   "urls": [
+    "https://arxiv.org/abs/2507.16075",
+    "https://arxiv.org/abs/2504.21776",
+    "https://github.com/thinkdepthai/Deep_Research"
+   ]
+  },
+  {
+   "name": "Evidence-linked dynamic outline + section-wise writing from cited passages",
+   "description": "Keep an outline whose sections cite evidence IDs and update it as evidence arrives. At write time, compose section by section, loading only that section's cited passages, then pruning them.",
+   "evidence": "WebWeaver vs brute-force writing: insight 42.72 to 50.02, readability 43.82 to 49.79, citation accuracy 86.73 to 93.37. RhinoInsight evidence audit: 18.1 to 31.2% win rate alone, 68.5% combined with the checklist.",
+   "applicability": "The best use of VAFER's existing passage store with s<hex>@rev:p refs: the helper returns the passages cited by an outline node, and one writer (not parallel writers) composes sequentially.",
+   "cost_or_risk": "Extra writing calls and time. Coherence across sections needs a final single pass.",
+   "urls": [
+    "https://arxiv.org/abs/2509.13312",
+    "https://arxiv.org/abs/2511.18743"
+   ]
+  },
+  {
+   "name": "Verify-then-research loop",
+   "description": "A separate, context-isolated verifier checks each load-bearing finding or answer against its cited evidence before the finding is reused. A rejection triggers targeted new searches, not just a record.",
+   "evidence": "PANINI-DR: verifier +16.0 pts on BCP; 77/101 endorsed-after-rejection proposals changed the answer or sources. MiroThinker-H1: +14.2 BrowseComp, +26.4 on the hard subset. Jina: separate evaluator; rejected answer disables answering.",
+   "applicability": "A verifier subagent with no access to the researcher's reasoning, only the claim and passages. A failure becomes a gap item in state.md for the next round.",
+   "cost_or_risk": "More calls. Loops need retry caps (PANINI: 5). Evidence comes mostly from short-answer benchmarks.",
+   "urls": [
+    "https://arxiv.org/abs/2610.15208",
+    "https://arxiv.org/abs/2603.15726",
+    "https://arxiv.org/abs/2608.23045"
+   ]
+  },
+  {
+   "name": "Raw full-text acquisition through the shell",
+   "description": "Fetch pages and PDFs with curl/python and extract the text locally instead of relying on WebFetch's model-processed output. Recover open-access full text for DOIs through free APIs (Unpaywall with email, Europe PMC, OpenAlex, Crossref, arXiv).",
+   "evidence": "Claude Code docs: WebFetch is lossy by design; use curl for the unprocessed page. hyperresearch builds its fetcher, PDF extraction and open-access recovery for this reason (design). WebThinker: link-following explorer adds ~3-7 pts.",
+   "applicability": "VAFER's helper should fetch URLs itself with stdlib HTTP and readability-style extraction, then store real passages. This removes the 'partial / omitted-lines' recovery loops. Free APIs need no keys (Unpaywall needs an email).",
+   "cost_or_risk": "Bot walls, JavaScript-rendered pages, SSRF and prompt-injection risk (fence fetched text as untrusted data). Codex needs network-enabled sandbox flags.",
+   "urls": [
+    "https://code.claude.com/docs/en/tools-reference.md",
+    "https://github.com/jordan-gibbs/hyperresearch/tree/9c16854fed2d345a557e8759156a2ca5d02fa4f4"
+   ]
+  },
+  {
+   "name": "Code actions / search-as-code",
+   "description": "Let the agent write short scripts that batch searches and fetches, parse and filter results, and keep only selected observations, instead of one tool call per action.",
+   "evidence": "smolagents: GAIA 55.15% (code) vs 33% (JSON). OpenSaC on Codex: -30% time, -38% tokens, +2.96pp BrowseComp (not significant).",
+   "applicability": "The host shell plus the VAFER helper (e.g., a fetch-many subcommand). Mostly an efficiency lever that frees budget for more evidence.",
+   "cost_or_risk": "Script failures and sandbox or network restrictions. Quality gain is unproven.",
+   "urls": [
+    "https://huggingface.co/blog/open-deep-research",
+    "https://arxiv.org/abs/2610.25779"
+   ]
+  },
+  {
+   "name": "Effort scaling / tier routing",
+   "description": "Classify the query (quick / standard / deep) and set explicit budgets for subagents, tool calls and sources. Do not upgrade every query.",
+   "evidence": "Anthropic effort rules. hyperresearch light/full tiers. hec-ovi quick (3-6 searches) vs deep. Design evidence.",
+   "applicability": "A small routing table in SKILL.md. The Plan module can pass the tier.",
+   "cost_or_risk": "Misclassification. Surface the chosen tier to the user.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://github.com/hec-ovi/research-skill"
+   ]
+  },
+  {
+   "name": "Minimal code-enforced finish gate",
+   "description": "One mechanical check before delivery: every citation resolves to a stored passage, quoted spans exist verbatim, number-bearing sentences are traceable. Fix the report, never argue with the gate.",
+   "evidence": "hyperresearch: prose gates were skipped or rationalized away, so it moved to 'run finish' plus a Codex Stop hook. deepdive validate_phases.py. Anecdotal but consistent.",
+   "applicability": "A helper 'finish' command. An optional project-level Stop hook (not global config). Keep it to a few cheap checks.",
+   "cost_or_risk": "Gate inflation recreates VAFER's ceremony problem. Hooks need user trust on Codex.",
+   "urls": [
+    "https://github.com/jordan-gibbs/hyperresearch/blob/main/CHANGELOG.md",
+    "https://github.com/Socialpranker/deepdive"
+   ]
+  },
+  {
+   "name": "Project-scoped research memory with progressive disclosure",
+   "description": "Persist findings and full-text sources in a project store. Check it before searching the web. Load INDEX, then summary, then body on demand. Keep a discarded-claims and failed-queries log.",
+   "evidence": "hyperresearch vault + PreToolUse 'search the vault first' hook (design). hec-ovi INDEX/summary/body tiers (100-500 / 50-200 / 500-3000 tokens) and its +8 DRB-II A/B. Jina keeps a bad-attempts memory.",
+   "applicability": "The direct bridge to the VAFER Memory module: DeepResearch writes durable entries keyed by topic and claim; Memory serves retrieval.",
+   "cost_or_risk": "Stale facts. Needs dates and staleness markers, plus re-verification of reused claims.",
+   "urls": [
+    "https://github.com/hec-ovi/research-skill",
+    "https://github.com/jordan-gibbs/hyperresearch/tree/9c16854fed2d345a557e8759156a2ca5d02fa4f4"
+   ]
+  },
+  {
+   "name": "Verifiable checklist / research brief as acceptance criteria",
+   "description": "Convert the request into atomic, checkable sub-goals (a coverage matrix) before searching. Use it to steer search, to set the 'done' criterion, and for the final coverage check.",
+   "evidence": "RhinoInsight checklist alone: 18.1 to 30.1% DeepConsult win rate. ODR research brief as 'north star'. hyperresearch coverage matrix requires >=3 sources per atomic item.",
+   "applicability": "The natural output of the VAFER Plan module, which DeepResearch consumes.",
+   "cost_or_risk": "Over-specification can block discovery of unknown unknowns. Allow the checklist to be revised.",
+   "urls": [
+    "https://arxiv.org/abs/2511.18743",
+    "https://blog.langchain.com/open-deep-research/"
+   ]
+  },
+  {
+   "name": "Just-in-time step loading (progressive disclosure of the procedure)",
+   "description": "Keep the entry SKILL.md a thin router and load each phase's instructions only when that phase runs, so instructions survive context compaction and do not burn attention.",
+   "evidence": "hyperresearch V7 (one 1200-line skill) lost steps to compaction 'in 100% of runs' where the orchestrator did not re-read it; V8 loads 16 step files fresh (anecdotal). Their quoted gain compares different queries (Q57 55.9 vs Q9 52.6), so it is not a valid ablation.",
+   "applicability": "Addresses VAFER's 5.7k-word, caveat-heavy reference load. Put phase procedures in references/ and read them on demand.",
+   "cost_or_risk": "More file reads. A missed read means a missed procedure.",
+   "urls": [
+    "https://raw.githubusercontent.com/jordan-gibbs/hyperresearch/9c16854fed2d345a557e8759156a2ca5d02fa4f4/src/hyperresearch/skills/hyperresearch.md"
+   ]
+  },
+  {
+   "name": "Independence (syndication) weighting",
+   "description": "Cluster derivative copies (wire stories, press releases) so that n copies count as one voice when judging consensus.",
+   "evidence": "Implemented in hyperresearch (MinHash plus canonical URL plus wire-boilerplate key). No ablation published. Addresses the weakness of GPT-Researcher's 'most frequent information' heuristic.",
+   "applicability": "Cheap helper heuristic over stored passages. Use it only to annotate, not as a gate.",
+   "cost_or_risk": "False merges. Low measured value so far.",
+   "urls": [
+    "https://github.com/jordan-gibbs/hyperresearch/blob/main/CHANGELOG.md"
+   ]
+  }
+ ],
+ "anti_patterns": [
+  {
+   "name": "Parallel section writing by independent subagents",
+   "why": "Produces disjoint, poorly coordinated reports.",
+   "evidence": "LangChain ODR hit this twice (workflow and multi-agent versions) and moved writing to one final call.",
+   "urls": [
+    "https://blog.langchain.com/open-deep-research/",
+    "https://rlancemartin.github.io/2025/07/30/bitter_lesson/"
+   ]
+  },
+  {
+   "name": "Mono-context accumulation",
+   "why": "Context suffocation and noise contamination degrade decisions and writing.",
+   "evidence": "IterResearch beats ReAct by 12.7-19.2pp. WebWeaver brute-force writing is much worse than section-wise writing. ODR single agent researched subtopics less deeply.",
+   "urls": [
+    "https://arxiv.org/abs/2511.07327",
+    "https://arxiv.org/abs/2509.13312"
+   ]
+  },
+  {
+   "name": "Verification or bookkeeping that never triggers new evidence gathering",
+   "why": "Every positive verification result found loops back into research. Pure record-keeping adds tokens and minutes but no information.",
+   "evidence": "PANINI-DR and MiroThinker-H1 gains come from rejection followed by re-search. VAFER v0.0.3 (sealed audits, hash-bound reviews) scored 98.5 vs control 99.4 and spent about 7 minutes in record integration.",
+   "urls": [
+    "https://arxiv.org/abs/2610.15208",
+    "https://arxiv.org/abs/2603.15726"
+   ]
+  },
+  {
+   "name": "Treating WebFetch output as source text",
+   "why": "WebFetch returns a separate model's extraction, not the page. Passages and quotes bound to it are summaries, and they cause partial or omitted-content artifacts.",
+   "evidence": "Claude Code docs: 'lossy by design ... use curl via Bash for the unprocessed page'.",
+   "urls": [
+    "https://code.claude.com/docs/en/tools-reference.md"
+   ]
+  },
+  {
+   "name": "Prose-only gates and honor-system pipelines",
+   "why": "Models skip or rationalize away instructions, especially late in long runs and on Codex.",
+   "evidence": "hyperresearch: verify was never run, a 'false positives' memo dismissed 24 hallucinated quotes, and Codex answered inline with zero vault notes.",
+   "urls": [
+    "https://github.com/jordan-gibbs/hyperresearch/blob/main/CHANGELOG.md",
+    "https://github.com/jordan-gibbs/hyperresearch/blob/main/codex_bench/README.md"
+   ]
+  },
+  {
+   "name": "Imposed structure that bottlenecks model capability",
+   "why": "Fixed decompositions and ceremony stop the system from benefiting as models improve.",
+   "evidence": "Lance Martin's 'bitter lesson' write-up. Tongyi chose plain ReAct citing the Bitter Lesson. Jina found agent frameworks unnecessary.",
+   "urls": [
+    "https://rlancemartin.github.io/2025/07/30/bitter_lesson/",
+    "https://tongyi-agent.github.io/blog/introducing-tongyi-deep-research/"
+   ]
+  },
+  {
+   "name": "Unbudgeted recursive gap decomposition",
+   "why": "Hard to budget-force. The agent descends late and returns late to the original question.",
+   "evidence": "Jina moved from recursion to a FIFO gap queue that always re-adds the original question. In dzhng, breadth halves each level to keep recursion bounded.",
+   "urls": [
+    "https://jina.ai/news/a-practical-guide-to-implementing-deepsearch-deepresearch",
+    "https://github.com/dzhng/deep-research"
+   ]
+  },
+  {
+   "name": "Over-compressing page content",
+   "why": "Drops the details that rubrics reward and that citations need.",
+   "evidence": "II-Researcher: over-compression significantly degrades performance. ODR compression prompt insists on verbatim preservation.",
+   "urls": [
+    "https://www.ii.inc/web/blog/post/ii-researcher",
+    "https://github.com/langchain-ai/open_deep_research"
+   ]
+  },
+  {
+   "name": "Evaluating on famous topics with fluency-dominated rubrics",
+   "why": "Ceiling effects hide real differences. Judges reward register and fluency.",
+   "evidence": "DRB II presentation is 72-88 for all systems while recall varies 29-55. DeepResearchGym: fluency outpaces key-point recall. hyperresearch: register alone moved RACE +2.5. DRACO removes tasks where a strong system scores >90%.",
+   "urls": [
+    "https://huggingface.co/spaces/muset-ai/DeepResearch-Bench-Leaderboard",
+    "https://arxiv.org/abs/2505.19253",
+    "https://arxiv.org/abs/2602.11685"
+   ]
+  },
+  {
+   "name": "Flat source lists without per-claim attribution",
+   "why": "Citation faithfulness cannot be checked, and fabrication becomes invisible.",
+   "evidence": "dzhng appends all visited URLs as a list. DEFT: strategic content fabrication is the top failure (18.95%).",
+   "urls": [
+    "https://github.com/dzhng/deep-research",
+    "https://arxiv.org/abs/2512.01948"
+   ]
+  },
+  {
+   "name": "Trusting headline or vendor leaderboard claims",
+   "why": "Small n, judge changes, and aggregation choices inflate results.",
+   "evidence": "hyperresearch DRACO: 10 tasks with up to ~9-point grader noise. MiroFlow: 82.4% headline vs 73.94% pass@1 trace. ThinkDepth's '#1' was under the retired Gemini judge.",
+   "urls": [
+    "https://hyperresearch.ai/benchmarks/draco",
+    "https://github.com/MiroMindAI/MiroFlow",
+    "https://github.com/thinkdepthai/Deep_Research"
+   ]
+  },
+  {
+   "name": "Vague delegation and over-spawning",
+   "why": "Duplicated searches, gaps, and wasted tokens.",
+   "evidence": "Anthropic: early agents spawned 50 subagents for simple queries, and three subagents duplicated the same supply-chain search.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system"
+   ]
+  }
+ ],
+ "implications_for_vafer": [
+  "Turn VAFER from an integrity layer into an information layer. In every ablation, the gains come from more or better-organized evidence: STORM roughly doubles sources, the WebThinker explorer adds 7 pts, Anthropic finds tokens explain 80% of variance, and DRB-II recall gaps are 15+ pts. Spend the 720 s budget on 3-5 parallel lens-diverse subagents with link-following, not on ~7 minutes of record integration.",
+  "Make the helper fetch raw text itself (stdlib HTTP or curl, readability extraction, PDF text, open-access recovery via free OpenAlex, Crossref, arXiv, Europe PMC and Unpaywall with an email). Today VAFER stores WebFetch's model-processed output, which Claude Code documents as lossy. That explains the 'partial / omitted-lines' recovery churn and why bound passages failed to support claims (R02).",
+  "Keep the passage store but make it drive work. Use findings linked to sub-questions plus plan revision (PANINI: 41.3 to 58.0), a dynamic outline citing passage refs, and section-wise writing that loads only the cited passages (WebWeaver: +7 insight, +6.6 citation accuracy). Remove sealed audits, staged declarations and hash-bound reviews from the default path, or make them opt-in.",
+  "Replace post-hoc audits with a verify-then-research loop. A context-isolated verifier subagent checks each load-bearing claim against its passage, and a rejection becomes a gap that triggers targeted search (PANINI +16, MiroThinker-H1 +14.2). End with one cheap sampled cite-check of number-bearing sentences, as hyperresearch does.",
+  "Adopt draft-first denoising with a size-capped state.md that is rewritten each round (question, evolving draft, COVERED/PARTIAL/UNSUPPORTED/CONTRADICTED gaps, next delegations), not appended. This follows IterResearch, TTD-DR and Deep Dog 2. One writer produces the final report, never parallel section writers.",
+  "Shrink SKILL.md to a thin router and load phase procedures just in time. Cut the integrity caveats ('does not establish', 'cannot', ...), which consume attention without adding capability. Keep exactly one code-enforced finish check: citations resolve, quotes are verbatim, numbers are traceable.",
+  "Plan for host limits. Claude Code allows 200 WebSearch calls per session, shared with subagents, and WebSearch returns titles and URLs only. Codex needs network-enabled sandbox flags, its custom agents have no tool allowlists, and it may answer inline unless a project-level Stop hook or explicit instructions prevent it. Provide an inline fallback that uses the same state file.",
+  "For Memory interop, write durable findings, passages and discarded claims to a project-scoped store with progressive disclosure (INDEX, then summary, then passages), and check it before web search (hyperresearch vault hook, hec-ovi). Mark dates and staleness and re-verify reused claims. That is how VAFER can beat 'notes.md plus raw JSON' on retained-memory follow-ups.",
+  "For Plan interop, the Plan module emits the research brief or verifiable checklist (atomic items, acceptance criteria, tier/budget). DeepResearch treats it as the coverage matrix and the done criterion. RhinoInsight's checklist alone moved the DeepConsult win rate from 18% to 30%.",
+  "Redesign the evaluation to escape the ceiling. Use non-famous, post-cutoff, multi-part tasks (DRACO or DRB-II style), rubrics with information-recall items and negative criteria, and separate scores for citation faithfulness and 'observed support' (answer recoverable from saved evidence, as in PANINI-DR). Run 20+ paired tasks with 2+ repeats each. Control for length and register. Add a 'bare model + same subagent fan-out' arm so the skill's effect is separated from plain parallelism.",
+  "Position against hyperresearch. It already offers full pipelines that take 30 min to 2.5 h. VAFER's niche can be measured gains in 10-20 minute runs, with no new installs beyond Python stdlib and portable across Claude Code and Codex. Do not copy its 16-step ceremony. Copy its full-text fetching, vault-first lookup, coverage matrix and code-enforced gate."
+ ],
+ "open_questions": [
+  "No controlled study with adequate n compares a Claude Code or Codex research skill against the bare model with host tools on long-form research. hec-ovi has n=3 tasks; hyperresearch has no bare baseline.",
+  "Do the gains from workspace reconstruction and verify-before-reuse (IterResearch, PANINI-DR, MiroThinker-H1, all short-answer benchmarks) carry over to long-form report quality, or mainly to answer accuracy and verifiability? STORM's human eval found no verifiability gain.",
+  "How much of the DRB and RACE differences come from judge-style effects (register +2.5 RACE, length, pedagogy) rather than research quality?",
+  "What is the best fan-out (number of subagents, searches per subagent) within a ~12-minute cap and the 200-WebSearch session limit, and does gap-driven delegation beat fixed lenses at that budget?",
+  "How reliable are Codex custom agents and hooks for enforcing a pipeline across Codex versions and sandbox modes, and what fallback keeps quality when subagents are unavailable?",
+  "Is multi-draft synthesis (hyperresearch triple draft, LLM Council +1.87) worth its time at short budgets compared with spending the same tokens on more evidence?",
+  "Which free, keyless sources (OpenAlex, Crossref, arXiv, Europe PMC, HN Algolia, GitHub, SEC EDGAR full-text search, Reddit JSON) add the most recall per minute for typical VAFER tasks?"
+ ],
+ "sources": [
+  {
+   "url": "https://github.com/jordan-gibbs/hyperresearch/tree/9c16854fed2d345a557e8759156a2ca5d02fa4f4",
+   "title": "hyperresearch README at commit 9c16854 (and compare with main, +5 fix commits)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://raw.githubusercontent.com/jordan-gibbs/hyperresearch/9c16854fed2d345a557e8759156a2ca5d02fa4f4/src/hyperresearch/skills/hyperresearch.md",
+   "title": "hyperresearch V8 router skill (entry SKILL template)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://raw.githubusercontent.com/jordan-gibbs/hyperresearch/9c16854fed2d345a557e8759156a2ca5d02fa4f4/skills/deep-research/SKILL.md",
+   "title": "hyperresearch bootstrap deep-research skill",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://github.com/jordan-gibbs/hyperresearch/blob/main/codex_bench/README.md",
+   "title": "hyperresearch Codex bench harness README",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://github.com/jordan-gibbs/hyperresearch/blob/main/CHANGELOG.md",
+   "title": "hyperresearch CHANGELOG",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://raw.githubusercontent.com/jordan-gibbs/hyperresearch/9c16854fed2d345a557e8759156a2ca5d02fa4f4/src/hyperresearch/skills/hyperresearch-2-width-sweep.md",
+   "title": "hyperresearch step 2 width sweep / step 14.5 cite-check / hooks.py",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://hyperresearch.ai/benchmarks/draco",
+   "title": "Hyperresearch: DRACO benchmark, how we tested",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://arxiv.org/abs/2402.14207",
+   "title": "STORM: Assisting in Writing Wikipedia-like Articles From Scratch with LLMs",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2408.15232",
+   "title": "Co-STORM: Into the Unknown Unknowns",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://github.com/stanford-oval/storm",
+   "title": "stanford-oval/storm README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/langchain-ai/open_deep_research",
+   "title": "LangChain open_deep_research README, configuration.py, prompts.py",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://blog.langchain.com/open-deep-research/",
+   "title": "LangChain blog: Open Deep Research",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://rlancemartin.github.io/2025/07/30/bitter_lesson/",
+   "title": "Lance Martin: Learning the Bitter Lesson",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://huggingface.co/blog/open-deep-research",
+   "title": "Hugging Face: Open-source DeepResearch, Freeing our search agents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/assafelovic/gpt-researcher",
+   "title": "GPT-Researcher README and skills/gpt-researcher/SKILL.md",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2505.19253",
+   "title": "DeepResearchGym",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/dzhng/deep-research",
+   "title": "dzhng/deep-research README and src/deep-research.ts",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://github.com/jina-ai/node-DeepResearch",
+   "title": "Jina node-DeepResearch README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://jina.ai/news/a-practical-guide-to-implementing-deepsearch-deepresearch",
+   "title": "Jina: A Practical Guide to Implementing DeepSearch/DeepResearch",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://github.com/Alibaba-NLP/DeepResearch",
+   "title": "Alibaba Tongyi DeepResearch README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://tongyi-agent.github.io/blog/introducing-tongyi-deep-research/",
+   "title": "Tongyi DeepResearch blog",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2510.24701",
+   "title": "Tongyi DeepResearch Technical Report",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2511.07327",
+   "title": "IterResearch: Rethinking Long-Horizon Agents with Interaction Scaling",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.13309",
+   "title": "WebResearcher",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.13312",
+   "title": "WebWeaver: Structuring Web-Scale Evidence with Dynamic Outlines",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2507.02592",
+   "title": "WebSailor",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2505.22648",
+   "title": "WebDancer",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://github.com/MiroMindAI/MiroThinker",
+   "title": "MiroThinker README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.15726",
+   "title": "MiroThinker-1.7 and H1: Towards Heavy-Duty Research Agents via Verification",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2511.11793",
+   "title": "MiroThinker v1.0 technical report",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://github.com/MiroMindAI/MiroFlow",
+   "title": "MiroFlow README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.21776",
+   "title": "WebThinker",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/Intelligent-Internet/ii-researcher",
+   "title": "II-Researcher README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.ii.inc/web/blog/post/ii-researcher",
+   "title": "II-Researcher blog post",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2507.16075",
+   "title": "Deep Researcher with Test-Time Diffusion (TTD-DR)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/thinkdepthai/Deep_Research",
+   "title": "ThinkDepth.ai Deep Research README",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://github.com/beneadie/Deep-Dog-2",
+   "title": "Deep Dog 2 README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://beneadie01.substack.com/p/deep-dog-2-how-reflection-delegation",
+   "title": "Deep Dog 2: How Reflection and Structured Delegation Improve Supervisor-Subagent Research",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2511.18743",
+   "title": "RhinoInsight",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2610.15208",
+   "title": "PANINI-DR: Controlled Deep Research through Generative Semantic Workspaces",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2610.25779",
+   "title": "OpenSaC: Search as Code in Deep Research Agents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.16217",
+   "title": "Argus: Evidence Assembly for Scalable Deep Research Agents",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2608.23045",
+   "title": "From Inertia to Objectivity: Noise Isolation (NIS-Agent)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.09730",
+   "title": "SearchSwarm: Delegation Intelligence for Long-Horizon Deep Research",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2511.19399",
+   "title": "DR Tulu: RL with Evolving Rubrics",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2512.01948",
+   "title": "How Far Are We from Genuinely Useful Deep Research Agents? (FINDER/DEFT)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2604.02923",
+   "title": "An Inspectable LLM Council for Multi-Model Research Answer Aggregation",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.11685",
+   "title": "DRACO benchmark",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/Ayanami0730/deep_research_bench",
+   "title": "DeepResearch Bench README (judge migration news)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://huggingface.co/spaces/muset-ai/DeepResearch-Bench-Leaderboard",
+   "title": "DeepResearch Bench leaderboards (data/leaderboard.csv, data_gpt55/leaderboard.csv, data_drb2/leaderboard.csv)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "title": "Anthropic: How we built our multi-agent research system",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/tools-reference.md",
+   "title": "Claude Code tools reference (WebFetch/WebSearch behavior)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/hec-ovi/research-skill",
+   "title": "hec-ovi/research-skill README (DRB II A/B)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/Socialpranker/deepdive",
+   "title": "deepdive skill README and eval/README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/199-biotechnologies/claude-deep-research-skill",
+   "title": "199-biotechnologies claude-deep-research-skill README",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://github.com/Weizhena/Deep-Research-skills",
+   "title": "Weizhena Deep-Research-skills README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/mvanhorn/last30days-skill",
+   "title": "last30days-skill README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/aldrinor/deep-cove-research-pro",
+   "title": "Deep Cove Research Pro README (DRB entry)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://api.github.com/search/repositories?q=deep+research+claude+code+skill",
+   "title": "GitHub repository search: deep-research skills/plugins for Claude Code and Codex",
+   "read_depth": "abstract-or-snippet"
+  }
+ ]
+}

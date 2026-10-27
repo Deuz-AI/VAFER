@@ -1,0 +1,1268 @@
+{
+ "key": "techniques",
+ "topic": "Research-process techniques with measured benefit for LLM research agents, and their costs (evidence through Oct 2026), mapped onto a Claude Code / Codex skill that uses only host tools",
+ "summary": "The biggest measured driver of research-agent accuracy is how much useful searching and reading the agent does. For Anthropic, token usage alone explained 80% of BrowseComp variance. BrowseComp accuracy rises smoothly with browsing effort, and best-of-64 by confidence adds 15-25%. Frontier SOTA runs use compaction up to 10M tokens, with multi-agent reaching 86.8%. These gains only show up when the task exceeds what the model already knows: ReSum excluded short tasks where ReAct suffices, Google's coordination gains vanish above a ~45% single-agent baseline, and skills hurt most on easy tasks. Structure pays off only when it changes what gets searched, kept or written: (a) clue decomposition as the first move (+7.4 pp with GPT-5.5); (b) an evolving findings workspace instead of raw history (+12.7/+19.2 pp over ReAct as a prompting strategy); (c) plan + persistent state, and checking each finding against its cited evidence before reuse (+16.7 and +16.0 pp in PANINI-DR, beating 8x majority voting at similar compute); (d) section-by-section writing from only the relevant evidence (citation accuracy 86.7→93.4; hallucination 2.6-4.5x lower). Multi-agent fan-out helps mostly by spending more tokens in isolated contexts on breadth-heavy work (Anthropic +90.2% at ~15x chat tokens). At matched compute its gains shrink to ~0-9%, independent agents amplify errors 17x, and parallel section writers produce disjoint reports. Verification helps when it is targeted and decomposed (≤3 checkable sub-questions, peaking at 3-4 rounds) and runs when evidence enters the workspace and again before synthesis. It also has to separate answer-like summaries from primary records: one planted document drops accuracy 66-88 pp, a generic 'verify' prompt recovers 12→28/100, and summary-aware rules recover 67/100. Holistic rubric judges barely register these integrity gains: a claim-based writer swap moved RACE by ≤1.8 points while cutting hallucination 2.6-4.5x. Public skills often reduce pass rates (−1.3 to −4.2%) while costing 72-394% more tokens, and curated focused skills (≤3 modules) help mainly on hard, expertise-heavy tasks (+16.6 pp). So VAFER should send easy questions down a near-bare path, and spend the budget for hard ones on parallel evidence gathering, a working findings file, targeted verification and grounded section-wise writing. Bookkeeping should move into scripts, and evaluation should use tasks that defeat parametric memory and claim-level metrics. A host-tool fact matters here: Claude Code WebFetch returns a model-extracted digest (lossy by design, ≤100k chars), and Codex local search defaults to a cached index with shell networking off. So 'verbatim passages' stored from fetch output are not verification against the source text.",
+ "findings": [
+  {
+   "claim": "Orchestrator-worker multi-agent beat single-agent on Anthropic's internal research eval, at a large token cost",
+   "detail": "Opus 4 lead + Sonnet 4 subagents outperformed single-agent Opus 4 by 90.2%; agents use ~4x chat tokens, multi-agent ~15x; best for breadth-first queries (e.g. board members of all S&P 500 IT companies)",
+   "url": "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-06-13"
+  },
+  {
+   "claim": "Token spend dominates BrowseComp performance",
+   "detail": "3 factors explained 95% of variance; token usage alone 80%, then number of tool calls and model choice; upgrading to Sonnet 4 gained more than doubling the token budget on Sonnet 3.7",
+   "url": "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-06-13"
+  },
+  {
+   "claim": "Parallelism mainly buys wall-clock time; vague delegation causes duplicate or missing work",
+   "detail": "3-5 parallel subagents each making 3+ parallel tool calls cut research time by up to 90%; short task specs led subagents to repeat each other's searches; early agents spawned 50 subagents for simple queries and preferred SEO content farms until source-quality heuristics were added; effort rules: 1 agent/3-10 calls simple, 2-4 subagents/10-15 calls comparisons, >10 subagents complex",
+   "url": "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+   "evidence_type": "documented-design",
+   "strength": "moderate",
+   "date": "2025-06-13"
+  },
+  {
+   "claim": "At matched compute, multi-agent gains on web research are small, and independent agents are harmful",
+   "detail": "260 configs, matched ~4,800 reasoning tokens/trial. BrowseComp-Plus: Centralized +0.2%, Decentralized +9.2%, Independent −35% vs single agent. Error amplification: independent 17.2x vs centralized 4.4x. Gains vanish when the single-agent baseline is above ~45%",
+   "url": "https://arxiv.org/abs/2512.08296",
+   "evidence_type": "ablation",
+   "strength": "strong",
+   "date": "2025-12-09"
+  },
+  {
+   "claim": "Under equal LLM-call budgets, multi-agent role structure adds cost without clear benefit",
+   "detail": "Planner-Executor-Critic team 0.769 vs single evolved agent 0.754 (p=0.80) despite 1.8x calls; planner/critic prompts evolved to empty or low-impact; ALFWorld/WebShop, 7B backbone",
+   "url": "https://arxiv.org/abs/2609.04217",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-06-25"
+  },
+  {
+   "claim": "Subagents lose implicit decisions unless full context is shared",
+   "detail": "Principles: 'share context, and share full agent traces'; 'actions carry implicit decisions'; recommends a single-threaded agent plus a history compressor for long tasks",
+   "url": "https://cognition.ai/blog/dont-build-multi-agents",
+   "evidence_type": "expert-opinion",
+   "strength": "moderate",
+   "date": "2025-06-12"
+  },
+  {
+   "claim": "Use multi-agent for research only; write the report in one pass afterwards",
+   "detail": "Parallel section-writing subagents produced disjoint reports. A single agent's quality dropped on multi-subtopic requests (context clash, shallower per-topic search). Fix: compress chat into a research brief and have sub-agents prune findings before returning",
+   "url": "https://blog.langchain.com/open-deep-research/",
+   "evidence_type": "anecdote",
+   "strength": "weak",
+   "date": "2025-07-16"
+  },
+  {
+   "claim": "Divide-and-conquer helps breadth tasks, but mostly by searching more",
+   "detail": "WideSearch, Claude Sonnet 4 single vs multi-agent: item-F1 57.9→62.2, row-F1 31.7→38.5, searches 8.2→27.6. Best system success rate 5%; one human 20%. Pass@128 item-F1 ~80 but table-level <20",
+   "url": "https://arxiv.org/abs/2508.07999",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-08-11"
+  },
+  {
+   "claim": "On exhaustive enumeration tasks, more search or spend does not close the row-level gap",
+   "detail": "Across 20 web agents: Item-F1 92.8 vs Row-F1 53.7; free-text cells fail most",
+   "url": "https://arxiv.org/abs/2606.27595",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2026-06-25"
+  },
+  {
+   "claim": "Same-model agents are low-variance and converge on prior consensus",
+   "detail": "18 of 30 agents chose the same git branch name. Hidden-profile tasks (unique facts decisive) do not saturate even for top models. 'Consensus is not necessarily evidence' is understood in the abstract but not acted on without prompting",
+   "url": "https://www.anthropic.com/research/multiagent-systems",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2026-08-13"
+  },
+  {
+   "claim": "Multi-agent runs consume huge token budgets and raise contamination exposure",
+   "detail": "Unintended (leaked-answer) solutions 0.24% single-agent vs 0.87% multi-agent (3.7x); one problem used 40.5M tokens (~38x the median); the most expensive legitimate search used 622M tokens; Opus 4.6 multi-agent BrowseComp 86.81% → 86.57% after blocklist rerun",
+   "url": "https://www.anthropic.com/research/eval-awareness-browsecomp",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2026-03-06"
+  },
+  {
+   "claim": "SOTA BrowseComp runs pair compaction with very large budgets",
+   "detail": "Opus 4.6 BrowseComp config: web search/fetch, programmatic tool calling, compaction at 50k up to 10M total tokens; 'Adding a multi-agent harness increased scores to 86.8%'",
+   "url": "https://www.anthropic.com/news/claude-opus-4-6",
+   "evidence_type": "documented-design",
+   "strength": "moderate",
+   "date": "2026-02-05"
+  },
+  {
+   "claim": "Accuracy scales with browsing compute; parallel attempts with confidence selection add more",
+   "detail": "Accuracy 'scales smoothly' with browsing effort. 64 samples/question: majority, weighted and best-of-N give +15-25% over a single attempt, best-of-N highest. Deep Research 51.5% with 91% calibration error",
+   "url": "https://arxiv.org/abs/2504.12516",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong",
+   "date": "2025-04-16"
+  },
+  {
+   "claim": "Reconstructing the workspace from an evolving report beats ReAct accumulation, even as a prompt-only strategy",
+   "detail": "Prompt-only vs ReAct on BrowseComp: o3 +12.7 pp, DeepSeek-V3.1 +19.2 pp. Trained agent: 5.5%→50.1% from 2→2048 turns in a constant 40K workspace, using 80.1 turns on average; +12.6 pp over a mono-context agent that had a 64K window",
+   "url": "https://arxiv.org/abs/2511.07327",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2025-11-10"
+  },
+  {
+   "claim": "Training-free periodic summarization helps only on long-horizon tasks",
+   "detail": "+4.5% average over ReAct (GAIA, BrowseComp, BC-zh). Simple tasks were excluded because ReAct suffices. Summarizer quality matters. The authors use fixed triggers because 'reliable self-initiated context management often exceeds' current agents",
+   "url": "https://arxiv.org/abs/2509.13313",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2025-09-16"
+  },
+  {
+   "claim": "Parallel agents plus synthesis over compressed reports gives large test-time gains",
+   "detail": "Tongyi Heavy Mode (n parallel context-managed agents + a synthesis model): BrowseComp 43.4 (Avg@3) → 58.3; Pass@3 59.64",
+   "url": "https://arxiv.org/abs/2510.24701",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-10-28"
+  },
+  {
+   "claim": "Context editing and a memory file improved agentic search",
+   "detail": "Internal agentic-search eval: memory tool + context editing +39% over baseline, context editing alone +29%. In a 100-turn web search eval it completed otherwise-failing runs with 84% fewer tokens",
+   "url": "https://www.anthropic.com/news/context-management",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-09-29"
+  },
+  {
+   "claim": "Context rot: performance drops as input grows, even on simple tasks",
+   "detail": "18 LLMs tested. LongMemEval focused prompts (~300 tokens) consistently beat full prompts (~113k); Claude showed the largest gap, driven by abstentions. Distractors hurt more as length grows",
+   "url": "https://research.trychroma.com/context-rot",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong",
+   "date": "2025-07-14"
+  },
+  {
+   "claim": "Context management lets the agent run more iterations, which raises accuracy",
+   "detail": "Without memory management an agent overflows within 10 iterations; with it, >50. Early ablation: 30% more iterations and higher performance. Averages 23 steps and >200 URLs per task",
+   "url": "https://moonshotai.github.io/Kimi-Researcher/",
+   "evidence_type": "ablation",
+   "strength": "weak",
+   "date": "2025-06"
+  },
+  {
+   "claim": "A functional research workspace (plan, linked findings, verification before reuse) beats simpler harnesses at matched compute",
+   "detail": "Shared gpt-oss-120b, frozen corpora: BrowseComp-Plus 73.3%, +16 pts over next-best of 7 harnesses (incl. IterResearch). Plan+state: 41.3→58.0. Verifier: +16.0 pts. Findings reused in later searches 77.4% vs 32.1%. SLEUTH 8x majority vote at 1.12x compute: 64.7%. 20→80 turns: +2.7 pts for 2.8x tokens",
+   "url": "https://arxiv.org/abs/2610.15208",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-10-10"
+  },
+  {
+   "claim": "Decomposing the question into clues for the first retrieval move raises accuracy even for frontier models",
+   "detail": "~9.6 clues per question, per-clue retrieval, union and rerank before the ReAct loop: GPT-5.5 on BrowseComp-Plus 83.1%→90.5% at comparable agent-issued search cost",
+   "url": "https://arxiv.org/abs/2609.14412",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-09-13"
+  },
+  {
+   "claim": "Targeted, decomposed verification feedback improves accuracy but peaks early and causes some regressions",
+   "detail": "Claude-3.7: GAIA-Full ~52→60.1 (peak), GAIA-Web 52→63.5, XBench 41→47, BrowseComp 5→10. Peaks around round 3-4 because correct→incorrect flips persist. ≤3 targeted questions like 'Does source X state claim Y?'; holistic re-solve judges miss subtle errors",
+   "url": "https://arxiv.org/abs/2601.15808",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-01-22"
+  },
+  {
+   "claim": "One plausible false 'answer-like' document collapses accuracy; only summary-aware verification rules recover most of it",
+   "detail": "Accuracy drops of 66-88 pp. GPT-5.4 noisy: 12/100; generic verify instruction: 28/100; guidance separating summaries from record-level evidence: 67/100. Searches fell 7.1→4.5 and route coverage 45%→16%. With all records supplied directly: 91/100",
+   "url": "https://arxiv.org/abs/2607.17291",
+   "evidence_type": "ablation",
+   "strength": "strong",
+   "date": "2026-07-19"
+  },
+  {
+   "claim": "Misleading evidence entering right before synthesis is adopted most; source style matters more than search rank",
+   "detail": "One misleading document: false-conclusion rate 0%→54.7%. Cold start 40.5% vs pre-synthesis 85.5%. Paper-style 61% vs forum posts 37.5%; rank effect ≤1.7 pts. Pre/post-research defenses cut it to 15-58% but do not eliminate it",
+   "url": "https://arxiv.org/abs/2607.20891",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-07-23"
+  },
+  {
+   "claim": "Deep research systems are one-sided on debate queries and often unsupported by their own sources",
+   "detail": "One-sided answers: GPT-5 DR 54.7%, Copilot DR 94.8%. Unsupported statements up to 97.5% (Perplexity DR). Citation accuracy 40-80% across systems",
+   "url": "https://arxiv.org/abs/2509.04499",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-09-02"
+  },
+  {
+   "claim": "Failures cluster in generation (fabrication) and evidence acquisition, not in understanding the task",
+   "detail": "~1,000 reports: Generation 38.76%, Retrieval 33.10%, Reasoning 28.14%. Strategic content fabrication 18.95%; insufficient external information acquisition 16.30%; lack of analytical depth 11.09%; failure to understand requirements 10.55%; verification failure 8.72%",
+   "url": "https://arxiv.org/abs/2512.01948",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-12-01"
+  },
+  {
+   "claim": "Top deep research agents miss implicit requirements",
+   "detail": "Gemini DR and OpenAI DR score under 68% average rubric compliance, mostly from missed implicit context and weak reasoning about retrieved information",
+   "url": "https://arxiv.org/abs/2511.07685",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-11-10"
+  },
+  {
+   "claim": "Section-wise writing that retrieves only each section's cited evidence beats writing from all evidence at once",
+   "detail": "Claude Sonnet 4, hierarchical vs brute-force writer: citation accuracy 86.73→93.37, supportiveness 90.95→98.73. Outline refinement rounds: comprehensiveness 48.85→50.82. Overall RACE spread is narrow (43.4-50.6), while citation accuracy is 93.37 vs OpenAI DR 75.01 / Gemini DR 78.30",
+   "url": "https://arxiv.org/abs/2509.13312",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2025-09-16"
+  },
+  {
+   "claim": "A claim-based writer cuts hallucination sharply while holistic rubric scores barely move",
+   "detail": "Replacing only the writer in 3 DR pipelines: hallucination 2.6-4.5x lower, necessary-fact recall 1.2-1.7x higher. RACE: readability −3.8 to −5.9 and overall ≤1.8 lower. Outline comes from the query, not from partial evidence",
+   "url": "https://arxiv.org/abs/2608.28643",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-08-12"
+  },
+  {
+   "claim": "Outline-first research and writing clearly helps; the perspective component adds little with strong models",
+   "detail": "Outline-driven RAG ROUGE-1 44.26 vs plain RAG 28.52; STORM without outline stage 26.77. Editors: +25% organized, +10% coverage. GPT-4 heading recall 92.73 vs 92.39 without perspectives, 88.75 without conversation",
+   "url": "https://arxiv.org/abs/2402.14207",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2024-02-22"
+  },
+  {
+   "claim": "Draft-first iterative revision with retrieval improves long-form reports",
+   "detail": "TTD-DR (Gemini-2.5-pro) win rates vs OpenAI DR: 69.1% (LongForm Research) and 74.5% (DeepConsult); self-evolution alone 60.9/59.8; ≤20 revision steps",
+   "url": "https://arxiv.org/abs/2507.16075",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2025-07-21"
+  },
+  {
+   "claim": "Verification gains depend on checks being independent of the draft, and partly come from deleting claims",
+   "detail": "Llama-65B closed-book: factored checks beat joint (FActScore 60.8→63.7); factor+revise 71.4 vs baseline 55.9, but facts per answer 16.6→12.3. Wikidata precision 0.17→0.36 while correct answers 0.59→0.38",
+   "url": "https://arxiv.org/abs/2309.11495",
+   "evidence_type": "ablation",
+   "strength": "weak",
+   "date": "2023-09-20"
+  },
+  {
+   "claim": "An LLM agent can verify atomic facts against search at roughly human quality and much lower cost",
+   "detail": "SAFE agreed with crowd annotators 72% of the time on ~16k facts, won 76% of 100 disagreements, and was >20x cheaper",
+   "url": "https://arxiv.org/abs/2403.18802",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong",
+   "date": "2024-03-27"
+  },
+  {
+   "claim": "Claim checking must first filter out unverifiable content",
+   "detail": "VeriScore extracts only verifiable claims; FActScore/SAFE assume every claim is verifiable. Factuality on one task does not predict another",
+   "url": "https://arxiv.org/abs/2406.19276",
+   "evidence_type": "documented-design",
+   "strength": "moderate",
+   "date": "2024-06-27"
+  },
+  {
+   "claim": "Citations added after drafting trade a little precision for coverage; retrieval quality drives both",
+   "detail": "'Consistent trade-off between coverage and citation correctness'; post-hoc citation: high coverage, competitive correctness; recommends post-hoc-first with retrieval",
+   "url": "https://arxiv.org/abs/2509.21557",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-09-25"
+  },
+  {
+   "claim": "Cheap post-processing citation checks improve accuracy",
+   "detail": "Keyword/semantic/LLM cross-check of citations against retrieved articles: +15.46% relative accuracy; let a ~12x cheaper model match",
+   "url": "https://arxiv.org/abs/2504.15629",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak",
+   "date": "2025-04-22"
+  },
+  {
+   "claim": "LLM judges are unreliable at detecting fine-grained research failures, especially evidence problems",
+   "detail": "Best judges under 55% overall accuracy on controlled injected failures, worst on evidence verification. Rubric verification is noisy; majority voting gives diminishing returns",
+   "url": "https://arxiv.org/abs/2605.19196",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2026-05-18"
+  },
+  {
+   "claim": "Even experts mislabel deep-research claims in one pass; audit-then-score fixes it",
+   "detail": "Unassisted PhD experts 60.8% accurate on a hidden micro-gold set; after 4 audit-then-score rounds 90.9%",
+   "url": "https://arxiv.org/abs/2603.05912",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2026-03-06"
+  },
+  {
+   "claim": "More interaction steps beat more per-step thinking, but repeated re-checks can flip correct answers",
+   "detail": "Gemma 3 12B on WebArena: 'check-again' after termination 23%→≥28%. At equal tokens interaction scaling is steepest; budget forcing plateaus ~0.26; per-step best-of-n helps least",
+   "url": "https://arxiv.org/abs/2506.07976",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2025-06-09"
+  },
+  {
+   "claim": "Over-searching harms abstention and is worst in reasoning models and deep research systems",
+   "detail": "Search improves answerable-query accuracy but hurts abstention on unanswerable ones; worse with noisy retrieval and across turns; negative evidence improves abstention; proposes a tokens-per-correct metric",
+   "url": "https://arxiv.org/abs/2601.05503",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2026-01-09"
+  },
+  {
+   "claim": "Retriever quality and depth matter as much as the agent",
+   "detail": "GPT-5 BrowseComp-Plus 55.9%→70.1% with a better retriever and fewer search calls; Pi-Serini: BM25 tuning +18.0% accuracy, deeper retrieval +25.3% evidence recall",
+   "url": "https://arxiv.org/abs/2605.10848",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-05-11"
+  },
+  {
+   "claim": "Curated, focused skills help on expertise-heavy tasks; exhaustive bundles do worse",
+   "detail": "87 tasks, 18 model-harness configs: 33.9%→50.5% (+16.6 pp; per-config +4.1 to +25.7). Skills with at most three modules beat larger bundles",
+   "url": "https://arxiv.org/abs/2602.12670",
+   "evidence_type": "ablation",
+   "strength": "strong",
+   "date": "2026-02-13"
+  },
+  {
+   "claim": "Injected skills often hurt, especially on easy tasks, and inflate tokens",
+   "detail": "31 skills, 4 models: Pass@2 −1.3 to −4.2%, tokens +72 to +394%, gains in only 17-36% of skill-project pairs. Losses concentrate on easy early tasks. Failure modes: length-distracted and content-misled. Anti-pattern rules beat example-heavy content",
+   "url": "https://arxiv.org/abs/2608.23067",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-08-24"
+  },
+  {
+   "claim": "Models follow long SKILL.md procedures poorly; compiling them into executable harnesses fixes it",
+   "detail": "Direct SKILL.md adherence 26.2-54.0% vs up to 100% compiled; tokens −21 to −45% for 3 of 4 models; SkillsBench +3.5 to +35.7 pp",
+   "url": "https://arxiv.org/abs/2607.27309",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-07-29"
+  },
+  {
+   "claim": "Instruction-following degrades with instruction count",
+   "detail": "Best frontier models 68% accurate at 500 simultaneous instructions; bias toward earlier instructions",
+   "url": "https://arxiv.org/abs/2507.11538",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2025-07-15"
+  },
+  {
+   "claim": "Harness and skill gains often overfit the tuning set",
+   "detail": "In 21 significant settings, overfitting explained 54% and test-time scaling 14% of gains on average; gains often failed to transfer to held-out tasks",
+   "url": "https://arxiv.org/abs/2610.22466",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2026-10-15"
+  },
+  {
+   "claim": "Plain files rival specialized memory tools",
+   "detail": "Letta agent with gpt-4o-mini, conversation history in files plus grep/search: 74.0% on LoCoMo vs Mem0's reported 68.5%",
+   "url": "https://www.letta.com/blog/benchmarking-ai-agent-memory",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak",
+   "date": "2025-08-12"
+  },
+  {
+   "claim": "Memory of distilled strategies, including lessons from failures, improves web agents",
+   "detail": "WebArena success +8.3 / +7.2 / +4.6 across 3 backbones, up to 16% fewer steps; memory-aware parallel scaling k=5: 49.7→55.1",
+   "url": "https://arxiv.org/abs/2509.25140",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2025-09-29"
+  },
+  {
+   "claim": "Persistent memory can carry adversarial content across agents",
+   "detail": "Content stored via shared artifacts propagated to 60-80% of agents, with chains up to 8 hops, even with GPT-5.6 Luna",
+   "url": "https://arxiv.org/abs/2609.35576",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2026-09-28"
+  },
+  {
+   "claim": "Structured handling of conflicting evidence helps",
+   "detail": "Multi-agent debate + aggregator: +11.40% AmbigDocs, +15.80% FaithEval (Llama3.3-70B); RAMDocs still hard (EM 32.6)",
+   "url": "https://arxiv.org/abs/2504.13079",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2025-04-17"
+  },
+  {
+   "claim": "Consensus-seeking or competitive debate suppresses informative disagreement",
+   "detail": "Competitive debate degrades into cheap talk; consensus debate filters out informative disagreement. A collaborative protocol: up to +10 pp and gains over single agent at the same budget",
+   "url": "https://arxiv.org/abs/2510.20963",
+   "evidence_type": "ablation",
+   "strength": "moderate",
+   "date": "2025-10-23"
+  },
+  {
+   "claim": "Expert fact-checkers read laterally, reaching better conclusions faster",
+   "detail": "10 fact checkers vs 10 PhD historians vs 25 Stanford students; fact checkers left the site to check credibility elsewhere and 'arrived at more warranted conclusions in a fraction of the time'",
+   "url": "https://doi.org/10.1177/016146811912101102",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate",
+   "date": "2019-11"
+  },
+  {
+   "claim": "Claude Code WebFetch is lossy by design; WebSearch returns titles/URLs and has a session cap",
+   "detail": "WebFetch runs the extraction prompt in a separate model call and Claude 'receives the result of that call rather than the raw page'; reads ≤100,000 chars per call; curl gives the raw page. WebSearch may run up to 8 backend searches per call; 200 calls per interactive session, shared with subagents",
+   "url": "https://code.claude.com/docs/en/tools-reference",
+   "evidence_type": "documented-design",
+   "strength": "strong",
+   "date": "2026"
+  },
+  {
+   "claim": "Codex local defaults: cached web search index, no shell networking; subagents run when a skill asks",
+   "detail": "Local Codex uses cached search (OpenAI index) by default, live via --search; sandbox has no network by default. Codex delegates to subagents 'when applicable AGENTS.md or skill instructions request it'; subagents cost more tokens",
+   "url": "https://developers.openai.com/codex/web-search",
+   "evidence_type": "documented-design",
+   "strength": "strong",
+   "date": "2026"
+  },
+  {
+   "claim": "Code-expressed actions are more step-efficient than JSON tool calls",
+   "detail": "Code actions need ~30% fewer steps; GAIA validation 55.15% (code) vs 33% (JSON) with the same setup",
+   "url": "https://huggingface.co/blog/open-deep-research",
+   "evidence_type": "ablation",
+   "strength": "weak",
+   "date": "2025-02-04"
+  }
+ ],
+ "techniques": [
+  {
+   "name": "Effort triage and routing (lite vs deep path)",
+   "description": "Classify the request first: straightforward, depth-first or breadth-first, and parametric-likely vs long-tail or recent. Then set the tool budget and subagent count. Skip the heavy machinery when the bare model will do.",
+   "evidence": "Anthropic added effort rules (1 agent / 3-10 calls for simple questions; 2-4 subagents / 10-15 calls for comparisons; >10 subagents for complex work) after over-investment failures. Skill injection hurt most on easy tasks (−1.3 to −4.2% Pass@2, +72-394% tokens). Multi-agent coordination gains vanish above a ~45% single-agent baseline.",
+   "applicability": "Step 0 of SKILL.md: a ~10-line decision table. The lite path is host defaults plus three rules: primary source for key numbers/dates, state conflicts, cite only fetched pages. The deep path loads the modules below.",
+   "cost_or_risk": "Misrouting a hard question to lite under-researches it. Mitigation: escalate if the first search round reveals contested, recent or long-tail facts.",
+   "urls": [
+    "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+    "https://arxiv.org/abs/2608.23067",
+    "https://arxiv.org/abs/2512.08296"
+   ]
+  },
+  {
+   "name": "Research brief plus coverage map",
+   "description": "Turn the request into a short brief: goal, implicit requirements, time frame, deliverable, and the must-answer sub-questions. The brief is the reference for delegation, stopping and the final gap check.",
+   "evidence": "LangChain uses a brief as the 'north star'. Top deep research agents score under 68% rubric compliance, mainly from missed implicit context. FINDER: failure to understand requirements 10.55%, content specification deviation 10.73%.",
+   "applicability": "research/<run>/brief.md (≤300 words) holding a sub-question table with a status column. The same file is the hand-off artifact for the Plan module.",
+   "cost_or_risk": "One extra turn; risk of over-scoping a narrow question.",
+   "urls": [
+    "https://blog.langchain.com/open-deep-research/",
+    "https://arxiv.org/abs/2511.07685",
+    "https://arxiv.org/abs/2512.01948"
+   ]
+  },
+  {
+   "name": "First-move clue decomposition with a parallel search batch",
+   "description": "Split the question into independent constraints (clues) and issue short, complementary searches for all of them in one parallel batch before the iterative loop. Union and rank the candidate URLs, then read the best ones.",
+   "evidence": "Question's Gambit: GPT-5.5 on BrowseComp-Plus 83.1%→90.5% at comparable search cost (~9.6 clues per question). Anthropic: agents default to over-long queries; start wide, keep queries under 5 words. WideSearch lists incomplete decomposition as a top failure.",
+   "applicability": "One assistant turn with 4-10 parallel WebSearch calls (Claude Code) or web_search calls (Codex). Write candidates.md with URL, title, guessed source type. Then fetch the top few in parallel.",
+   "cost_or_risk": "Uses the Claude Code session search cap (200, shared with subagents). Codex local mode may hit a stale cached index on recent topics.",
+   "urls": [
+    "https://arxiv.org/abs/2609.14412",
+    "https://raw.githubusercontent.com/anthropics/anthropic-cookbook/main/patterns/agents/prompts/research_subagent.md",
+    "https://arxiv.org/abs/2508.07999"
+   ]
+  },
+  {
+   "name": "Orchestrator-worker researcher subagents with a central verification bottleneck",
+   "description": "Each round, the lead spawns 3-5 researcher subagents with an objective, output format, source guidance, boundaries and a tool budget (5-15 calls). Subagents explore in their own context and return condensed findings plus file references. The lead verifies, integrates and re-plans; it never runs independent, unverified aggregation.",
+   "evidence": "Anthropic: +90.2% over single Opus 4 (internal), research time −90%, ~15x chat tokens. WideSearch item-F1 57.9→62.2 (with ~3.4x more searches). At matched compute on BrowseComp-Plus: centralized +0.2%, decentralized +9.2%, independent −35%; error amplification 17.2x independent vs 4.4x centralized.",
+   "applicability": "Claude Code Task/Agent subagents (own context window) and Codex subagents (spawned when the skill asks). Ship one subagent prompt template in a reference file. Each subagent appends evidence capsules to research/<run>/evidence/<subq>.jsonl and returns ≤1-2k tokens plus the path.",
+   "cost_or_risk": "4-15x tokens. Same-model subagents duplicate each other or make correlated errors unless given distinct angles. Fragile when sub-tasks depend on each other (Cognition). Shared search caps.",
+   "urls": [
+    "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+    "https://arxiv.org/abs/2512.08296",
+    "https://code.claude.com/docs/en/sub-agents",
+    "https://developers.openai.com/codex/subagents",
+    "https://cognition.ai/blog/dont-build-multi-agents"
+   ]
+  },
+  {
+   "name": "Filesystem evidence capsules and lightweight references",
+   "description": "Keep verbatim quote + URL + title + publication date + retrieval date + source type in append-only files outside the context. Pass file paths, not contents, and load only what a step needs.",
+   "evidence": "Anthropic recommends subagents write artifacts to files to avoid the 'game of telephone', plus just-in-time references. Letta's filesystem-only memory scored 74.0% on LoCoMo. EMBER's verbatim evidence capsules reached F1 0.30 vs 0.18 at an 8k budget. VAFER's own control kept notes.md + raw JSON and matched its retained-memory score.",
+   "applicability": "A ≤150-line script for append, dedupe and grep-by-tag. Cite URL + quote in the report; drop opaque refs like s<hex>@rev:p000001 from prose.",
+   "cost_or_risk": "WebFetch output is a model digest, so 'verbatim' quotes must be requested explicitly in the fetch prompt, or captured raw with curl where shell networking exists (Claude Code yes, Codex default no).",
+   "urls": [
+    "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+    "https://www.letta.com/blog/benchmarking-ai-agent-memory",
+    "https://arxiv.org/abs/2606.05894",
+    "https://code.claude.com/docs/en/tools-reference"
+   ]
+  },
+  {
+   "name": "Evolving-report workspace with context reconstruction",
+   "description": "Maintain findings.md (question, synthesized findings, open questions, dead ends). At each milestone the lead continues from brief + findings rather than the accumulated raw tool history.",
+   "evidence": "IterResearch as a prompting strategy: o3 +12.7 pp and DeepSeek-V3.1 +19.2 pp over ReAct on BrowseComp. ReSum training-free +4.5% (long tasks only). Anthropic memory + context editing +39%, −84% tokens on a 100-turn search eval. Kimi: >50 iterations vs <10 without context management. Chroma: focused prompts beat long ones.",
+   "applicability": "Update findings.md after every subagent round. Use fixed triggers (end of each round, or every ~8-10 tool calls), not self-initiated summarization. Host compaction covers the rest.",
+   "cost_or_risk": "Little benefit on short, 16-call tasks. Summaries can drop facts that matter later (tune for recall first).",
+   "urls": [
+    "https://arxiv.org/abs/2511.07327",
+    "https://arxiv.org/abs/2509.13313",
+    "https://www.anthropic.com/news/context-management",
+    "https://research.trychroma.com/context-rot"
+   ]
+  },
+  {
+   "name": "Dependency-aware plan with findings that drive follow-up",
+   "description": "Represent sub-questions with dependencies. Each verified finding fills a slot and becomes input to the next assignment, and the plan is revised when findings contradict it.",
+   "evidence": "PANINI-DR: plan + persistent state raised BrowseComp-Plus 41.3→58.0 (56.7→73.3 with the same synthesis). Newly found entities reused in later searches 77.4% vs 32.1%. Beat SLEUTH 8x majority voting at 1.12x compute (73.3 vs 64.7).",
+   "applicability": "plan.md table: sub-question | depends_on | status | finding | evidence ids. The lead assigns open slots to subagents.",
+   "cost_or_risk": "About 7.3x the compute of the simpler harness. Rigid plans are a known failure (DEFT 5.6%), so allow revision.",
+   "urls": [
+    "https://arxiv.org/abs/2610.15208",
+    "https://arxiv.org/abs/2512.01948"
+   ]
+  },
+  {
+   "name": "Targeted verification before reuse and before synthesis",
+   "description": "Verify findings that will steer later research, plus key claims (numbers, dates, mechanisms, attributions). Use at most 3 decomposed checks ('Does source X state Y?') in a fresh context that has not seen the draft. Feed rejections back and stop once accepted.",
+   "evidence": "PANINI verifier +16.0 pts; 77 of 101 previously rejected proposals came back with a changed answer or sources. DeepVerifier: GAIA-Web 52→63.5, peaking at round 3-4 with persistent correct→incorrect flips. Holistic re-solve judges miss subtle errors. CoVe: factored checks beat joint checks.",
+   "applicability": "A verifier subagent receives only the claim + URL + quote and returns supported / partial / unsupported with the supporting quote. Cap at 2 rounds. Run an evidence check right before writing, since late-entering evidence is adopted most (85.5%).",
+   "cost_or_risk": "Extra calls and latency; false rejections. Precision gains may come from deleting claims (CoVe: facts 16.6→12.3).",
+   "urls": [
+    "https://arxiv.org/abs/2610.15208",
+    "https://arxiv.org/abs/2601.15808",
+    "https://arxiv.org/abs/2309.11495",
+    "https://arxiv.org/abs/2607.20891"
+   ]
+  },
+  {
+   "name": "Primary-source tracing and record-level reconciliation",
+   "description": "Treat answer-like secondary summaries (news, blogs, aggregators, AI overviews) as leads. For each key claim, hop to the primary record (paper, spec, dataset, filing, official doc) or two independent records. Label provenance, and read laterally to judge an unknown site.",
+   "evidence": "DRNOISE: generic verify prompt 12→28/100; summary-aware rule 67/100; answer-like documents cut searches 7.1→4.5. MisKnow: paper-style presentation was adopted 61% vs posts 37.5%. Anthropic agents preferred SEO content farms until given source heuristics. Fact checkers using lateral reading reached better conclusions faster.",
+   "applicability": "One rule in SKILL.md plus a capsule field source_type ∈ {primary, secondary, aggregator, unknown}. The pre-writing check lists key claims that lack primary confirmation.",
+   "cost_or_risk": "Extra fetches; paywalls. Authority cues can still mislead, and official-looking pages are not automatically reliable.",
+   "urls": [
+    "https://arxiv.org/abs/2607.17291",
+    "https://arxiv.org/abs/2607.20891",
+    "https://doi.org/10.1177/016146811912101102",
+    "https://www.anthropic.com/engineering/built-multi-agent-research-system"
+   ]
+  },
+  {
+   "name": "Bounded interaction scaling (one gap check before stopping)",
+   "description": "Before finalizing, run one structured gap check of findings against the brief and, if gaps exist, do exactly one more targeted round. Spend the budget on more interactions rather than longer per-step deliberation.",
+   "evidence": "TTI check-again: 23%→≥28% (WebArena), but repeated re-checks flip correct answers. BrowseComp accuracy scales smoothly with effort. PANINI: 20→80 turns gave only +2.7 pts for 2.8x tokens.",
+   "applicability": "A final step listing unanswered brief rows, capped at one extra round.",
+   "cost_or_risk": "Time; answer flips if the check repeats.",
+   "urls": [
+    "https://arxiv.org/abs/2506.07976",
+    "https://arxiv.org/abs/2504.12516",
+    "https://arxiv.org/abs/2610.15208"
+   ]
+  },
+  {
+   "name": "Heavy mode: parallel independent attempts plus synthesis",
+   "description": "For hard short-answer questions, run k diversified independent researcher subagents and synthesize or select from their compressed reports and confidence levels.",
+   "evidence": "BrowseComp best-of-64 by confidence: +15-25%. Tongyi Heavy Mode 43.4→58.3. ReasoningBank memory-aware scaling k=5: 49.7→55.1. But structured research (73.3) beat 8x voting (64.7) at similar compute.",
+   "applicability": "Optional flag that spawns 2-4 subagents with different strategies; the lead compares answers and evidence.",
+   "cost_or_risk": "k-fold tokens. Same-model diversity is low. Aggregation is weak for long reports.",
+   "urls": [
+    "https://arxiv.org/abs/2504.12516",
+    "https://arxiv.org/abs/2510.24701",
+    "https://arxiv.org/abs/2610.15208"
+   ]
+  },
+  {
+   "name": "Outline-first, single-writer, section-by-section grounded writing",
+   "description": "Derive the outline from the brief's information needs and refine it with evidence. A single writer (the lead) then drafts each section from only the capsules tagged to that section, with a fixed share of the time budget reserved for writing.",
+   "evidence": "WebWeaver: citation accuracy 86.73→93.37, supportiveness 90.95→98.73. CLAIMWRITER: hallucination 2.6-4.5x lower, necessary-fact recall 1.2-1.7x. STORM: outline-driven ROUGE-1 44.26 vs 28.52. LangChain: parallel section writers gave disjoint reports. TTD-DR draft-and-revise: 69-75% win rate vs OpenAI DR.",
+   "applicability": "Grep capsules by section tag and write per section. Reserve ≥20% of wall-clock time; VAFER once spent 8 s on synthesis.",
+   "cost_or_risk": "Readability fell 3.8-5.9 pts in the CLAIMWRITER rubric; more input tokens.",
+   "urls": [
+    "https://arxiv.org/abs/2509.13312",
+    "https://arxiv.org/abs/2608.28643",
+    "https://arxiv.org/abs/2402.14207",
+    "https://blog.langchain.com/open-deep-research/",
+    "https://arxiv.org/abs/2507.16075"
+   ]
+  },
+  {
+   "name": "Post-hoc citation pass with a mechanical quote check",
+   "description": "After drafting, attach or verify citations claim by claim. A script checks that each cited quote or number appears in the saved source text; mismatches are fixed or the claim is dropped.",
+   "evidence": "Anthropic runs a dedicated CitationAgent after research. Post-hoc citation gives high coverage with competitive correctness. CiteFix: +15.46% relative accuracy. Citation accuracy across deep research systems is only 40-80% (DeepTRACE).",
+   "applicability": "Python script: normalized substring match of each [n] quote against its saved page text, outputting a miss list.",
+   "cost_or_risk": "Needs real page text, not a WebFetch digest. Cheap to run.",
+   "urls": [
+    "https://raw.githubusercontent.com/anthropics/anthropic-cookbook/main/patterns/agents/prompts/citations_agent.md",
+    "https://arxiv.org/abs/2509.21557",
+    "https://arxiv.org/abs/2504.15629",
+    "https://arxiv.org/abs/2509.04499"
+   ]
+  },
+  {
+   "name": "Disagreement ledger and balanced coverage",
+   "description": "Track conflicting claims with source, date and credibility. Resolve by primary record, recency and consistency; otherwise present the conflict as unresolved. For contested questions, require both sides.",
+   "evidence": "DeepTRACE: deep research systems one-sided on 54.7-94.8% of debate queries. MADAM-RAG: +11.4 / +15.8 pts. Consensus-style debate suppresses informative dissent. Hidden-profile failures in agent groups.",
+   "applicability": "conflicts.md file plus a 'Where sources disagree' report section. Subagents must report unreconciled conflicts to the lead.",
+   "cost_or_risk": "Longer reports; risk of false balance.",
+   "urls": [
+    "https://arxiv.org/abs/2509.04499",
+    "https://arxiv.org/abs/2504.13079",
+    "https://arxiv.org/abs/2510.20963",
+    "https://www.anthropic.com/research/multiagent-systems"
+   ]
+  },
+  {
+   "name": "Perspective seeding for depth-first topics",
+   "description": "List 3-5 expert perspectives or angles and use them to give subagents distinct tasks, which counters same-model convergence.",
+   "evidence": "STORM perspective ablation is small with GPT-4 (92.73 vs 92.39 heading recall). Same-model agents converge (18 of 30 chose the same branch name).",
+   "applicability": "A planning sub-step whose output feeds the subagent task specs.",
+   "cost_or_risk": "Small measured gain; extra tokens.",
+   "urls": [
+    "https://arxiv.org/abs/2402.14207",
+    "https://www.anthropic.com/research/multiagent-systems"
+   ]
+  },
+  {
+   "name": "Stopping policy: coverage, saturation, budget, and no premature stop",
+   "description": "Stop when every brief row has adequate evidence (≥1 primary or ≥2 independent sources), or two rounds add no new facts, or the budget is hit. Never stop just because an answer-like page appeared.",
+   "evidence": "Anthropic agents both continued after having enough and searched endlessly for nonexistent sources. DRNOISE: answer-like documents shortened search and cut route coverage 45→16%. Over-searching hurts abstention. IterResearch agents used 80.1 of 2048 allowed turns.",
+   "applicability": "A stopping checklist in SKILL.md plus the status column in plan.md.",
+   "cost_or_risk": "Heuristic; may stop early on exhaustive enumeration tasks.",
+   "urls": [
+    "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+    "https://arxiv.org/abs/2607.17291",
+    "https://arxiv.org/abs/2601.05503",
+    "https://arxiv.org/abs/2511.07327"
+   ]
+  },
+  {
+   "name": "Cross-session memory: evidence capsules plus strategy lessons",
+   "description": "Save capsules and short lessons (good sources, failed queries, dead ends) to project memory. On reuse, treat them as dated leads and re-verify volatile facts.",
+   "evidence": "ReasoningBank: +4.6 to +8.3 success points, up to 16% fewer steps. AWM: +24.6% / +51.1% relative. ACE warns of brevity bias and context collapse. Memory-borne attacks reached 60-80% of agents.",
+   "applicability": ".vafer/memory/{capsules.jsonl, lessons.md}, project-scoped, with no global config. The Memory module owns the schema; DeepResearch greps it first.",
+   "cost_or_risk": "Staleness, poisoning, privacy.",
+   "urls": [
+    "https://arxiv.org/abs/2509.25140",
+    "https://arxiv.org/abs/2409.07429",
+    "https://arxiv.org/abs/2510.04618",
+    "https://arxiv.org/abs/2609.35576"
+   ]
+  },
+  {
+   "name": "Lean skill packaging: progressive disclosure, scripts for deterministic steps",
+   "description": "A short SKILL.md of decision rules and anti-pattern rules; at most 3 reference modules loaded on demand; deterministic work (capture, dedupe, quote check) in scripts; no mandatory ceremony.",
+   "evidence": "SkillsBench: +16.6 pp, and focused ≤3-module skills beat exhaustive bundles. SIGIL: SKILL.md adherence only 26-54%. IFScale: 68% accuracy at 500 instructions. WebDev skills: length-distraction failure mode. Anthropic Agent Skills guidance: progressive disclosure and code for deterministic operations.",
+   "applicability": "Rewrite VAFER's ~5,700 words to ~1-1.5k plus 3 modules (verify, write, memory). Replace caveat prose with short 'never do X' rules.",
+   "cost_or_risk": "Weaker models may need more guidance.",
+   "urls": [
+    "https://arxiv.org/abs/2602.12670",
+    "https://arxiv.org/abs/2607.27309",
+    "https://arxiv.org/abs/2507.11538",
+    "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills"
+   ]
+  }
+ ],
+ "anti_patterns": [
+  {
+   "name": "Integrity ceremony as the default path",
+   "why": "It spends attention and wall-clock time without adding information. Skills that do this lose on easy tasks, and long procedural SKILL.md files are poorly followed.",
+   "evidence": "VAFER 0.0.3: 6.5-7 min of a 12-min cap on record integration; 8 s synthesis in one run; 3/5 runs over the cap. Public skills: −1.3 to −4.2% Pass@2, +72-394% tokens. SKILL.md adherence 26-54%.",
+   "urls": [
+    "https://arxiv.org/abs/2608.23067",
+    "https://arxiv.org/abs/2607.27309",
+    "https://arxiv.org/abs/2507.11538"
+   ]
+  },
+  {
+   "name": "Independent parallel agents without a verification bottleneck",
+   "why": "Errors propagate straight into the aggregate.",
+   "evidence": "Error amplification 17.2x independent vs 4.4x centralized; BrowseComp-Plus −35% vs single agent at matched compute.",
+   "urls": [
+    "https://arxiv.org/abs/2512.08296"
+   ]
+  },
+  {
+   "name": "Parallel section writers",
+   "why": "Uncoordinated implicit decisions produce disjoint reports.",
+   "evidence": "LangChain's early version wrote sections in parallel; reports were disjoint; writing was moved to one pass after research.",
+   "urls": [
+    "https://blog.langchain.com/open-deep-research/",
+    "https://cognition.ai/blog/dont-build-multi-agents"
+   ]
+  },
+  {
+   "name": "Holistic re-solve self-verification and unbounded check loops",
+   "why": "The verifier repeats the original reasoning errors, and later rounds flip correct answers.",
+   "evidence": "DeepVerifier: verification without decomposition misses subtle errors; accuracy peaks at round 3-4. TTI: repeated re-checks revise correct answers to incorrect.",
+   "urls": [
+    "https://arxiv.org/abs/2601.15808",
+    "https://arxiv.org/abs/2506.07976"
+   ]
+  },
+  {
+   "name": "Treating answer-like summaries as evidence, or letting late evidence in unchecked",
+   "why": "Agents defer to direct-answer documents and stop searching.",
+   "evidence": "One planted document causes 66-88 pp drops. Evidence injected right before synthesis is adopted 85.5% of the time vs 40.5% at cold start.",
+   "urls": [
+    "https://arxiv.org/abs/2607.17291",
+    "https://arxiv.org/abs/2607.20891"
+   ]
+  },
+  {
+   "name": "Citing fetch digests or internal refs as if they were source text",
+   "why": "Claude Code WebFetch returns a model extraction, not the page, so bound 'passages' can be paraphrases or omissions. A citation layer built on them certifies the digest, not the source.",
+   "evidence": "WebFetch is 'lossy by design'. VAFER R02/R04 lost points for claims not in the bound passage and a citation that didn't support the mechanism; nearly every capture got partial / omitted-line warnings.",
+   "urls": [
+    "https://code.claude.com/docs/en/tools-reference"
+   ]
+  },
+  {
+   "name": "Stuffing raw tool output into the lead agent's context",
+   "why": "Context rot and attention dilution.",
+   "evidence": "Focused ~300-token prompts beat full ~113k prompts. Anthropic subagents return 1-2k-token summaries. LangChain had sub-agents prune findings.",
+   "urls": [
+    "https://research.trychroma.com/context-rot",
+    "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+   ]
+  },
+  {
+   "name": "Vague delegation to same-model subagents with near-identical prompts",
+   "why": "They duplicate searches and make correlated mistakes.",
+   "evidence": "Subagents given short specs repeated each other's work (Anthropic). 18 of 30 same-model agents chose the same branch name.",
+   "urls": [
+    "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+    "https://www.anthropic.com/research/multiagent-systems"
+   ]
+  },
+  {
+   "name": "Evaluating on famous topics with holistic rubrics only",
+   "why": "Parametric knowledge saturates the rubric, rubrics hide claim-level errors, judges are noisy, and tuned prompts overfit.",
+   "evidence": "Claim-based writer: hallucination 2.6-4.5x lower while RACE moved ≤1.8. Judges under 55% on fine-grained failures. Harness gains 54% overfitting on average. Answers leak through papers and benchmark files.",
+   "urls": [
+    "https://arxiv.org/abs/2608.28643",
+    "https://arxiv.org/abs/2605.19196",
+    "https://arxiv.org/abs/2610.22466",
+    "https://www.anthropic.com/research/eval-awareness-browsecomp"
+   ]
+  },
+  {
+   "name": "Endless search or premature stopping",
+   "why": "Wastes budget, or yields wrong or one-sided answers.",
+   "evidence": "Anthropic agents continued when they already had enough and searched for nonexistent sources. Answer-like documents cut searches 7.1→4.5. Over-searching hurts abstention.",
+   "urls": [
+    "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+    "https://arxiv.org/abs/2607.17291",
+    "https://arxiv.org/abs/2601.05503"
+   ]
+  },
+  {
+   "name": "Persistent memory without provenance or expiry",
+   "why": "Stale or poisoned facts get re-cited across sessions.",
+   "evidence": "Memory-borne attacks spread to 60-80% of agents. ACE documents context collapse under iterative rewriting.",
+   "urls": [
+    "https://arxiv.org/abs/2609.35576",
+    "https://arxiv.org/abs/2510.04618"
+   ]
+  },
+  {
+   "name": "A fixed upfront outline from parametric knowledge (or one built from partial evidence)",
+   "why": "It locks in knowledge gaps, or lets incomplete retrieval dictate the report's structure.",
+   "evidence": "WebWeaver criticizes static outline-first pipelines; CLAIMWRITER builds the outline from the query rather than partial evidence; rigid planning is 5.6% of DEFT failures.",
+   "urls": [
+    "https://arxiv.org/abs/2509.13312",
+    "https://arxiv.org/abs/2608.28643",
+    "https://arxiv.org/abs/2512.01948"
+   ]
+  }
+ ],
+ "implications_for_vafer": [
+  "Pivot VAFER from bookkeeping to capability. The deep path should spend its budget on better evidence acquisition (clue decomposition, parallel researcher subagents, primary-source hops) and on targeted verification and grounded writing. Keep integrity mechanics only where evidence shows claim-level gains: verify before reuse, reconcile summaries with records, write section-wise from tagged evidence.",
+  "Add step-0 routing. Straightforward or famous-topic questions take a lite path close to the bare model plus 3 rules. The deep path engages only on breadth-heavy, long-tail, recent or contested questions, or when the first search round reveals conflict.",
+  "Use host subagents as the main lever (Claude Code Task/Agent; Codex subagents follow skill instructions to delegate). Spawn 3-5 per round with detailed specs and distinct angles. Subagents write evidence capsules to files and return ≤1-2k tokens; the lead stays the verification bottleneck. Budget for the Claude Code 200-search session cap.",
+  "Replace s<hex>@rev:pNNNN citation indirection with URL + verbatim-quote capsules and a mechanical quote-check script. In Claude Code, ask WebFetch to quote verbatim or capture raw text via curl. In Codex, shell networking is off by default and local search is cached, so detect that and say so for recency-sensitive questions.",
+  "Replace the record ledger with three small working files the agent actually uses to decide: brief.md (coverage map), plan.md (sub-questions with dependencies, status, findings), findings.md (evolving report used to reconstruct context each round). Plus conflicts.md for disagreements.",
+  "Rules backed by DRNOISE and MisKnow: answer-like secondary pages are leads, not evidence. Key numbers, dates and mechanisms need a primary record or two independent records. Do one evidence check immediately before writing, because late-entering evidence is adopted most.",
+  "Writing protocol: build the outline from the brief and refine it with evidence. The lead drafts section by section from capsules tagged to that section, then runs the citation check. Reserve ≥20% of wall-clock time for synthesis (VAFER once spent 8 s).",
+  "Stopping protocol: every brief row covered (≥1 primary or ≥2 independent sources), or two rounds with no new facts, or budget hit. Then one bounded gap-check round. Never stop on the first answer-like page.",
+  "Optional heavy mode for hard short-answer questions: 2-4 diversified independent researcher subagents, then synthesis or confidence-based selection. Off by default because of k-fold cost.",
+  "Memory interop: write capsules (with retrieval and publication dates) and a short lessons file to project-scoped .vafer/memory/. On new runs, grep memory first, treat hits as dated leads, and re-verify volatile facts.",
+  "Plan interop: brief.md and plan.md are the shared artifacts. The Plan module can create or consume them, and open questions or follow-ups are exported as Plan items.",
+  "Shrink SKILL.md from ~5,700 words to ~1-1.5k of decision rules and 'never do X' rules, with at most 3 reference modules (verify, write, memory). Move deterministic work into scripts and delete most caveat prose.",
+  "Rebuild the eval so a better method can actually show a gain. Use paired runs against a length-matched irrelevant-skill control. Use ≥20 tasks that defeat parametric memory: post-cutoff events, long-tail entities, exhaustive enumerations scored by item/row F1, multi-constraint questions. Add seeded misleading-document trials using a local page set. Report claim-level metrics (hallucination, misattribution, necessary-fact recall, answers recoverable from saved evidence) plus time and tokens, with a held-out split.",
+  "Expect the largest wins on breadth-heavy and long-tail tasks and in claim-level faithfulness, not in holistic rubric scores. The rubric that showed 98.5 vs 99.4 cannot detect these effects."
+ ],
+ "open_questions": [
+  "Do the structured-workspace gains (PANINI-DR +16 pts, IterResearch +12.7-19.2 pp) carry over to frontier Claude/GPT models on open-ended report tasks with live web, rather than short-answer BrowseComp-style tasks on frozen corpora with gpt-oss-120b?",
+  "What is the marginal value of each technique under tight budgets (e.g. 16 web calls, 12 minutes), where most published gains rely on far larger budgets?",
+  "Best verification policy: which claims to verify, and when, so gains exceed the correct→incorrect regressions and the time cost?",
+  "How reliable are verbatim quotes obtained through Claude Code WebFetch prompts, and can a portable skill get raw page text in Codex (no shell network, cached search) without new tools?",
+  "Does a mixed-model setup (cheaper subagents, stronger lead or the reverse) help in Claude Code/Codex? The scaling paper found sub-agent capability mattered more than orchestrator capability on BrowseComp-Plus.",
+  "Which context-reconstruction trigger works best on top of automatic host compaction?",
+  "How much does cross-session reuse of capsules and lessons actually improve later research, and how should stale facts be expired?",
+  "Which evaluation protocol for VAFER avoids contamination and judge noise while staying cheap: claim-level audit, answers recoverable from saved evidence, seeded misleading pages, or a combination?",
+  "Is breadth-vs-depth recursion (dzhng-style parameters) better than adaptive orchestrator decisions? No measured ablation of recursive depth/breadth parameters was found."
+ ],
+ "sources": [
+  {
+   "url": "https://www.anthropic.com/engineering/built-multi-agent-research-system",
+   "title": "How we built our multi-agent research system (Anthropic, 2025-06-13)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/research/multiagent-systems",
+   "title": "Patterns and problems in emerging multiagent systems (Anthropic, 2026-08-13)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+   "title": "Effective context engineering for AI agents (Anthropic, 2025-09-29)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/news/context-management",
+   "title": "Managing context on the Claude Developer Platform (2025-09-29)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/news/claude-opus-4-6",
+   "title": "Introducing Claude Opus 4.6 (2026-02-05)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/research/eval-awareness-browsecomp",
+   "title": "Eval awareness and contamination in BrowseComp (Anthropic, 2026-03-06)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/writing-tools-for-agents",
+   "title": "Writing effective tools for agents (Anthropic, 2025-09-11)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills",
+   "title": "Equipping agents for the real world with Agent Skills (2025-10-16)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/news/introducing-citations-api",
+   "title": "Introducing Citations on the Anthropic API",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://raw.githubusercontent.com/anthropics/anthropic-cookbook/main/patterns/agents/prompts/research_lead_agent.md",
+   "title": "Anthropic cookbook research lead / subagent / citations prompts",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://cognition.ai/blog/dont-build-multi-agents",
+   "title": "Don't Build Multi-Agents (Cognition, 2025-06-12)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://blog.langchain.com/open-deep-research/",
+   "title": "Open Deep Research (LangChain, 2025-07-16)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://raw.githubusercontent.com/dzhng/deep-research/main/README.md",
+   "title": "dzhng/deep-research README (breadth/depth design)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://huggingface.co/blog/open-deep-research",
+   "title": "Open-source DeepResearch (Hugging Face, 2025-02-04)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://moonshotai.github.io/Kimi-Researcher/",
+   "title": "Kimi-Researcher (Moonshot, 2025-06)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://research.trychroma.com/context-rot",
+   "title": "Context Rot (Chroma, 2025-07-14)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.letta.com/blog/benchmarking-ai-agent-memory",
+   "title": "Benchmarking AI Agent Memory: Is a Filesystem All You Need? (Letta, 2025-08-12)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.12516",
+   "title": "BrowseComp (OpenAI, 2025)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2511.07327",
+   "title": "IterResearch (2025-11)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.13313",
+   "title": "ReSum (2025-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2510.24701",
+   "title": "Tongyi DeepResearch Technical Report (2025-10)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2610.15208",
+   "title": "PANINI-DR: Controlled Deep Research through Generative Semantic Workspaces (2026-10)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2609.14412",
+   "title": "Question's Gambit: The First Move Matters in Agentic Deep Search (2026-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.10848",
+   "title": "Rethinking Agentic Search with Pi-Serini (2026-05)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2601.15808",
+   "title": "DeepVerifier: Inference-Time Scaling of Verification (2026-01)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2607.17291",
+   "title": "DRNOISE: Deep Research Agents in Misleading Evidence Environments (2026-07)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2607.20891",
+   "title": "Is Deep Research Reliable? Misleading Knowledge Induces False Conclusions (2026-07)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.04499",
+   "title": "DeepTRACE (2025-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2512.01948",
+   "title": "FINDER/DEFT: How Far Are We from Genuinely Useful Deep Research Agents? (2025-12)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2511.07685",
+   "title": "ResearchRubrics (2025-11)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.13312",
+   "title": "WebWeaver (2025-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2608.28643",
+   "title": "ClaimProbe/ClaimWriter: Redesigning and Auditing Deep Research Writing (2026-08)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2402.14207",
+   "title": "STORM (2024-02)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2408.15232",
+   "title": "Co-STORM (2024-08)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2507.16075",
+   "title": "TTD-DR: Deep Researcher with Test-Time Diffusion (2025-07)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2309.11495",
+   "title": "Chain-of-Verification (2023-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2403.18802",
+   "title": "Long-form factuality / SAFE (2024-03)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2406.19276",
+   "title": "VeriScore (2024-06)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2305.14251",
+   "title": "FActScore (2023-05)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.21557",
+   "title": "Generation-Time vs. Post-hoc Citation (2025-09)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.15629",
+   "title": "CiteFix (2025-04)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.05912",
+   "title": "DeepFact (2026-03)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.13855",
+   "title": "From Fluent to Verifiable: Claim-Level Auditability (2026-02)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.19196",
+   "title": "REFLECT: Can We Trust LLM Judges for Research Agents? (2026-05)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.29920",
+   "title": "RuVerBench: Can LLM-as-a-Judge Reliably Verify Rubrics? (2026-06)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.18940",
+   "title": "DREAM: Deep Research Evaluation with Agentic Metrics (2026-02)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2512.08296",
+   "title": "Towards a Science of Scaling Agent Systems (2025-12)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2609.04217",
+   "title": "At Equal Inference Cost, Multi-Agent Structure Does Not Beat a Single Frozen Agent (2026-06)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2510.20963",
+   "title": "When and Why Does Multi-Agent Debate Fail (2025-10)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.13079",
+   "title": "RAG with Conflicting Evidence / MADAM-RAG (2025-04)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2505.17762",
+   "title": "CONFACT: Resolving Conflicting Evidence in Fact-Checking (2025-05)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://doi.org/10.1177/016146811912101102",
+   "title": "Wineburg & McGrew, Lateral Reading and the Nature of Expertise (2019; abstract via OpenAlex)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.07999",
+   "title": "WideSearch (2025-08)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.27595",
+   "title": "Ko-WideSearch (2026-06)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.06600",
+   "title": "BrowseComp-Plus (2025-08)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2506.11763",
+   "title": "DeepResearch Bench (2025-06)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2506.21506",
+   "title": "Mind2Web 2 (2025-06)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.15804",
+   "title": "ReportBench (2025-08)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2506.07976",
+   "title": "Thinking vs. Doing: Test-Time Interaction scaling (2025-06)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2506.12928",
+   "title": "Scaling Test-time Compute for LLM Agents (2025-06)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2510.24698",
+   "title": "ParallelMuse (2025-10)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.25301",
+   "title": "Flash-Searcher (2025-09)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2601.05503",
+   "title": "Over-Searching in Search-Augmented LLMs (2026-01)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.03304",
+   "title": "DAS: Decision Boundary Alignment for Deep Search Agents (2026-02)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2212.10509",
+   "title": "IRCoT (2022)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2210.03350",
+   "title": "Self-Ask (2022)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2501.05366",
+   "title": "Search-o1 (2025-01)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2503.09516",
+   "title": "Search-R1 (2025-03)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2503.19470",
+   "title": "ReSearch (2025-03)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.21776",
+   "title": "WebThinker (2025-04)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.03160",
+   "title": "DeepResearcher (2025-04)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.07976",
+   "title": "ASearcher: Beyond Ten Turns (2025-08)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.28376",
+   "title": "Marco DeepResearch: Verification-Centric Design (2026-03)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.25140",
+   "title": "ReasoningBank (2025-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2409.07429",
+   "title": "Agent Workflow Memory (2024-09)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.07952",
+   "title": "Dynamic Cheatsheet (2025-04)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2510.04618",
+   "title": "Agentic Context Engineering (ACE) (2025-10)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.05894",
+   "title": "EMBER: Budgeted Evidence Retention (2026-06)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2609.35576",
+   "title": "Share-Borne AI Virus: Memory-Hopping Attacks (2026-09)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.12670",
+   "title": "SkillsBench (2026-02)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.31408",
+   "title": "Skill Availability and Presentation Granularity: a SkillsBench study (2026-05)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2608.23067",
+   "title": "Signal or Noise? Agent Skills in Web Development (2026-08)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2607.27309",
+   "title": "SIGIL: Skill Compilation (2026-07)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2507.11538",
+   "title": "IFScale: How Many Instructions Can LLMs Follow at Once? (2025-07)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2610.22466",
+   "title": "Harness-Delta Attribution (2026-10)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/sub-agents",
+   "title": "Claude Code docs: Subagents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/tools-reference",
+   "title": "Claude Code docs: Tools reference (WebFetch/WebSearch behavior)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://developers.openai.com/codex/subagents",
+   "title": "Codex docs: Subagents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://developers.openai.com/codex/web-search",
+   "title": "Codex docs: Web search",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://developers.openai.com/codex/sandbox",
+   "title": "Codex docs: Sandbox (network off by default)",
+   "read_depth": "partial"
+  }
+ ]
+}

@@ -1,0 +1,822 @@
+{
+ "key": "production",
+ "topic": "How the leading commercial deep-research systems work and what their builders measured (Anthropic, OpenAI, Google, Perplexity, Kimi, Microsoft, Manus, Tongyi, xAI, Mistral, plus 2026 multi-agent/fusion results), with implications for rebuilding VAFER",
+ "summary": "Every leading system runs the same loop: plan, then search and read in parallel or iteratively, then synthesize, then cite or verify. The gains they measured come from spending more useful compute, not from bookkeeping. Anthropic found token usage alone explained 80% of BrowseComp variance. OpenAI showed BrowseComp accuracy scaling smoothly with compute, and a 15-25% gain from picking the most confident of 64 samples. Running independent attempts in parallel and then selecting or merging them is the most consistently measured lever: ChatGPT agent HLE 41.6 to 44.4, Opus 4.6 BrowseComp about 84 to 86.8 with a multi-agent harness, GPT-5.6 90.4 to 92.2 in 4-agent 'ultra' mode, and OpenRouter's self-fusion (Opus 4.8 run twice plus a judge) 58.8 to 65.5 on DRACO. A frontier model working alone with search, fetch and context compaction already scores about 84-93% on BrowseComp. So famous topics with a 16-call cap leave no room for any harness to win, and VAFER's A/B result is what this evidence predicts. Harness gains do show up on report tasks drawn from real users: on DRACO, Perplexity's harness scored 70.5 against 59.8 for plain Opus 4.6 at about the same token count, though Perplexity's own search engine is a confound. The hosts now ship deep research themselves. Claude Code has a bundled /deep-research workflow that fans out searches, cross-checks sources and votes on each claim, and GPT-5.6 has a multi-agent 'ultra' mode in Codex. VAFER therefore has to beat those built-ins, not plain chat. Practices with support: orchestrator-worker with detailed briefs and explicit effort scaling; clarify and rewrite the brief, or let the user edit the plan; write a draft first and let its gaps steer the searches (TTD-DR, +8-15 win-rate points over self-evolution alone); keep raw pages in subagents or files; stop on diminishing returns while guarding against both stopping too early and hedging; check citations in a separate, skeptical pass after the report is written. Verification is a real weakness in the market: a third-party audit found citation accuracy of 40-80%, and citation quality is among DRACO's lowest axes. It should be one cheap, decoupled phase rather than ceremony at every step. Evaluate on DRACO, DeepSearchQA or BrowseComp(-Plus) style tasks with domain blocklists, at least 5 runs per arm and compute-matched baselines, and remove one component at a time.",
+ "findings": [
+  {
+   "claim": "Anthropic's multi-agent Research system (Opus 4 lead + Sonnet 4 subagents) beat single-agent Opus 4 by 90.2% on an internal research eval, mainly on breadth-first queries",
+   "date": "2025-06-13",
+   "detail": "Example: listing board members of all S&P 500 IT companies; the multi-agent system decomposed the task while the single agent 'failed to find the answer with slow, sequential searches'. Internal eval, not public.",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Token usage is the dominant driver of research-agent performance",
+   "date": "2025-06-13",
+   "detail": "On BrowseComp, three factors explained 95% of variance: token usage alone 80%, plus number of tool calls and model choice. Upgrading to Sonnet 4 gained more than doubling the token budget on Sonnet 3.7.",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Multi-agent research is expensive in tokens",
+   "date": "2025-06-13",
+   "detail": "Agents use about 4x the tokens of chat; multi-agent systems about 15x. Only worth it for high-value, parallelizable tasks; poor fit for tasks with tight inter-agent dependencies such as most coding.",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Parallelism cut research time by up to 90%",
+   "date": "2025-06-13",
+   "detail": "Lead spins up 3-5 subagents in parallel and each subagent makes 3+ tool calls in parallel; this replaced painfully slow sequential search.",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Anthropic put explicit effort-scaling rules and budgets into its prompts",
+   "date": "2025-06-13",
+   "detail": "Rules: simple fact-finding uses 1 agent and 3-10 calls; comparisons 2-4 subagents with 10-15 calls each; complex research >10 subagents. Open-sourced prompts: default 3 subagents, max 20; subagent budget <5 calls (simple), ~10 (hard), up to 15; hard stop at 20 calls / ~100 sources; queries under 5 words; always web_fetch promising results.",
+   "url": "https://github.com/anthropics/claude-cookbooks/tree/main/patterns/agents/prompts",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Early multi-agent failures came from vague delegation and runaway effort",
+   "date": "2025-06-13",
+   "detail": "Observed: 50 subagents spawned for simple queries; endless searching for nonexistent sources; subagents duplicating each other from briefs like 'research the semiconductor shortage'. Fix: every brief gets an objective, output format, sources/tools and task boundaries. Human testers also found agents preferring SEO content farms over academic PDFs, fixed with source-quality heuristics.",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "anecdote",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Anthropic citation design: the report is written without citations, then a separate CitationAgent adds them",
+   "date": "2025-06-13",
+   "detail": "The CitationAgent must not change the text, cites only where sources directly support a claim, and cites meaningful semantic units. The lead is told 'Do not include ANY Markdown citations'.",
+   "url": "https://github.com/anthropics/claude-cookbooks/blob/main/patterns/agents/prompts/citations_agent.md",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Anthropic research evals started small and used an LLM judge with a rubric",
+   "date": "2025-06-13",
+   "detail": "About 20 real-usage queries were enough early, when changes moved success rates from 30% to 80%. Rubric: factual accuracy, citation accuracy, completeness, source quality, tool efficiency. A single judge call scoring 0.0-1.0 plus pass/fail was most consistent with humans. The Jan 2026 evals post instead recommends an isolated judge per dimension, calibrated against experts.",
+   "url": "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+   "evidence_type": "expert-opinion",
+   "strength": "moderate"
+  },
+  {
+   "claim": "At the frontier, multi-agent adds only a few BrowseComp points over a strong single agent",
+   "date": "2026-02-05",
+   "detail": "Opus 4.6 single-agent setup: search, fetch, programmatic tool calling, compaction triggered at 50k tokens up to 10M total, max effort, about 84%. 'Adding a multi-agent harness increased scores to 86.8%'.",
+   "url": "https://www.anthropic.com/news/claude-opus-4-6",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Later Anthropic and OpenAI models show the same small multi-agent gain over a strong single agent",
+   "date": "2026-07-09",
+   "detail": "GPT-5.6 Sol: 90.4% single vs 92.2% 'ultra' (4 parallel agents by default, 'trading higher token use for stronger results and faster time-to-result'). Aggregated vendor reports: Opus 4.8 84.3% single vs 88.5% multi-agent; Sonnet 5 84.7 vs 86.6; Kimi K2.5 74.9 vs 78.4 with Agent Swarm.",
+   "url": "https://openai.com/index/gpt-5-6/",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "More agents and more tokens raise contamination risk; web evals need blocklists",
+   "date": "2026-03-06",
+   "detail": "Across 1,266 BrowseComp problems, unintended solutions occurred at 0.87% multi-agent vs 0.24% single-agent (3.7x). One problem burned 40.5M tokens (about 38x the median). 20+ answer-leak sources were found. URL blocklists were insufficient; blocking any result containing 'BrowseComp' worked best.",
+   "url": "https://www.anthropic.com/engineering/eval-awareness-browsecomp",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Harness components encode assumptions that go stale; test them by removing one at a time",
+   "date": "2026-03-24",
+   "detail": "Solo run: 20 min, $9, core feature broken. Full planner/generator/evaluator harness: 6 h, $200, working app. Agents 'reliably skew positive when grading their own work'; tuning a separate evaluator to be skeptical is more tractable. 'The evaluator is ... worth the cost when the task sits beyond what the current model does reliably solo.' Opus 4.5/4.6 made context resets and sprints unnecessary.",
+   "url": "https://www.anthropic.com/engineering/harness-design-long-running-apps",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Context engineering guidance: keep the smallest set of high-signal tokens",
+   "date": "2025-09-29",
+   "detail": "Context rot is real. Hold lightweight identifiers (paths, URLs) and load data just in time. Three long-horizon tools: compaction, structured note-taking (e.g. NOTES.md) and subagents that return condensed 1,000-2,000-token summaries. Start with a minimal prompt and add instructions only for observed failure modes.",
+   "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+   "evidence_type": "expert-opinion",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Moving tool orchestration into code cut research-task tokens by 37%",
+   "date": "2025-11-24",
+   "detail": "Programmatic Tool Calling: average 43,588 to 27,297 tokens on complex research tasks; internal knowledge retrieval 25.6% to 28.5%; GIA benchmark 46.5% to 51.2%. Tool Search raised Opus 4.5 on MCP evals from 79.5% to 88.1%.",
+   "url": "https://www.anthropic.com/engineering/advanced-tool-use",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Claude Code ships a bundled /deep-research workflow, the strongest 'bare host' baseline",
+   "date": "2026-05-28",
+   "detail": "/deep-research 'fans out web searches on a question across several angles, fetches and cross-checks the sources it finds, votes on each claim, and returns a cited report with claims that didn't survive cross-checking filtered out'. Claims that could not be checked are listed as unverified, not refuted. Workflows are JS scripts with agent()/parallel()/pipeline(), schema outputs, up to 16 concurrent agents by default, 1,000 agents per run, resumable, no mid-run user input, savable to .claude/workflows/ or a plugin workflows/ folder.",
+   "url": "https://code.claude.com/docs/en/workflows",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Anthropic's Agent SDK research demo writes subagent output to files",
+   "date": "2025-09",
+   "detail": "Lead (Task tool only) splits the request into 2-4 subtopics. Parallel Researcher subagents (WebSearch, Write) save notes to files/research_notes/. Then a Data Analyst makes charts and a Report Writer builds a PDF. Hooks log every tool call by subagent.",
+   "url": "https://github.com/anthropics/claude-agent-sdk-demos/tree/main/research-agent",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "OpenAI Deep Research is a browsing-optimized o3 trained end to end with RL",
+   "date": "2025-02-02",
+   "detail": "Trained on browsing and Python tasks; graded against ground truth or rubrics by a chain-of-thought grader. Runs 5-30 min. HLE 26.6%; GAIA 67.36 pass@1 / 72.57 cons@64. 'Pass rate vs max tool calls' rises with more browsing. Known weakness: confidence calibration.",
+   "url": "https://openai.com/index/introducing-deep-research/",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "BrowseComp: browsing alone is insufficient; compute and sample selection matter",
+   "date": "2025-04-16",
+   "detail": "GPT-4o 0.6%, with browsing 1.9%, o1 9.9%, Deep Research 51.5% (calibration error 91%). Humans solved 29.2% and gave up on 70.8% after 2 h. 64 samples with confidence voting gave +15-25%; best-of-N (highest confidence) was best — 'the model frequently knows when it's right'.",
+   "url": "https://arxiv.org/abs/2504.12516",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "ChatGPT Deep Research is a three-step pipeline: clarify, rewrite, research",
+   "date": "2025-06-26",
+   "detail": "An intermediate model (gpt-4.1) asks clarifying questions, then rewrites the prompt into detailed instructions before the research model runs. The API skips both steps. max_tool_calls is 'the primary tool' to bound cost and latency; background mode is recommended. o3/o4-mini-deep-research shut down 2026-07-23, replaced by gpt-5.6-sol plus tools.",
+   "url": "https://developers.openai.com/api/docs/guides/deep-research",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Deep Research system card: fewer hallucinations, and injection defenses at system level",
+   "date": "2025-02-25",
+   "detail": "PersonQA accuracy 0.86 vs 0.50 for GPT-4o; hallucination rate 0.13 vs 0.30 (said to be overstated by a stale test set). Mitigation: Deep Research may not navigate to or construct arbitrary URLs, which blocks data exfiltration.",
+   "url": "https://cdn.openai.com/deep-research-system-card.pdf",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Parallel rollouts plus confidence selection helped ChatGPT agent",
+   "date": "2025-07-17",
+   "detail": "HLE 41.6 pass@1, rising to 44.4 with up to 8 parallel attempts keeping the highest self-reported confidence. BrowseComp 68.9%, +17.4 pts over Deep Research. Tools: visual browser, text browser, terminal, connectors. The user can interrupt and redirect.",
+   "url": "https://openai.com/index/introducing-chatgpt-agent/",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "OpenAI's Feb 2026 Deep Research update added source control and live steering",
+   "date": "2026-02-10",
+   "detail": "Connect to any MCP server or app, restrict web searches to trusted sites, track progress in real time, interrupt to refine with follow-ups or new sources.",
+   "url": "https://openai.com/index/introducing-deep-research/",
+   "evidence_type": "documented-design",
+   "strength": "weak"
+  },
+  {
+   "claim": "Gemini Deep Research architecture: editable plan, async task manager, long context plus RAG, self-critique",
+   "date": "2024-12 (page updated 2025)",
+   "detail": "The user can refine the plan before execution. The model decides which subtasks run in parallel and which in sequence, grounding each step on everything gathered so far and trading 'comprehensiveness with compute and user wait time'. An async task manager keeps shared state between planner and task models for recovery without restarting. 1M-token context plus RAG for follow-ups. 'Multiple passes of self-critique' during synthesis.",
+   "url": "https://gemini.google/overview/deep-research/?hl=en",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Gemini Deep Research agent API: benchmarks and per-task cost",
+   "date": "2025-12-11 (versions 04-2026)",
+   "detail": "Gemini 3 Pro core with multi-step RL for search. HLE 46.4%, DeepSearchQA 66.1%, BrowseComp 59.2%. Standard tier: ~80 searches, ~250k input / ~60k output tokens, $1-3 per task. Max tier: ~160 searches, ~900k input, $3-7. Max research time 60 min, most under 20. collaborative_planning returns a plan to approve.",
+   "url": "https://ai.google.dev/gemini-api/docs/deep-research",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "DeepSearchQA: agents fail at stopping in both directions, and multiple trajectories help",
+   "date": "2026-01-28",
+   "detail": "900 causal-chain tasks requiring exhaustive answer sets. Gemini DR F1 81.9 vs fully correct 66.09: a ~15-pt 'last mile' gap from under-retrieval and hedging. Oracle pass@n: 67.18% (n=1), 74.51% (n=2), 81.72% (n=4), 85.71% (n=8). Gemini 2.5 Flash: F1 42.99, fully incorrect 45.27% (a step-function drop). GPT-5 Pro stopped when it could not open an Excel file.",
+   "url": "https://arxiv.org/abs/2601.20975",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Draft-first, retrieval-guided revision (TTD-DR) beat OpenAI Deep Research on long-form reports",
+   "date": "2025-07",
+   "detail": "Win rates vs OpenAI DR: 69.1% (LongForm Research) and 74.5% (DeepConsult). Ablation: self-evolution alone 60.9% / 59.8%; adding denoising-with-retrieval gave the rest. Up to 20 revision steps; steepest quality-per-latency slope. LLM judge aligned to humans on 200 reports.",
+   "url": "https://arxiv.org/abs/2507.16075",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Perplexity Deep Research optimizes for speed",
+   "date": "2025-02-14",
+   "detail": "'Dozens of searches, hundreds of sources', 2-4 minutes, most tasks under 3 min. Iteratively refines its research plan as it learns. SimpleQA 93.9%, HLE 21.1%. Vendor-reported.",
+   "url": "https://www.perplexity.ai/hub/blog/introducing-perplexity-deep-research",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak"
+  },
+  {
+   "claim": "DRACO: a research harness adds about 10-20 points over the same model with plain tools on real-user report tasks",
+   "date": "2026-02-04",
+   "detail": "100 tasks from thumbs-down production queries; ~39.3 weighted criteria per task, about half on factual accuracy; 415 of 3,934 criteria are negative. Scores: Perplexity DR (Opus 4.6) 70.5 vs plain Opus 4.6 + search + code 59.8, at similar input tokens (779k vs 691k) and latency (245 vs 193 s). Opus 4.5: 67.2 vs 46.7. Gemini DR 59.0; OpenAI o3-DR 52.1 at 1,808 s. The judge shifts absolute scores by 10-25 pts. Perplexity authored the benchmark and uses its own search, which confounds the comparison.",
+   "url": "https://arxiv.org/abs/2602.11685",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Running the same model twice and fusing the results gave a large DRACO gain",
+   "date": "2026-06-12",
+   "detail": "Opus 4.8 twice, synthesized by Opus 4.8: 65.5 vs 58.8 solo (+6.7). Fable 5 + GPT-5.5: 69.0 vs Fable 5 alone 65.3. A budget panel scored 64.7 at ~50% of Fable 5's cost. The judge lists consensus, contradictions, partial coverage, unique insights and blind spots before the final write-up. Not compute-matched. Panel models found the DRACO rubric online and needed domain exclusion.",
+   "url": "https://openrouter.ai/blog/announcements/fusion-beats-frontier/",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Kimi-Researcher: RL plus context management raised depth and accuracy",
+   "date": "2025-06-20",
+   "detail": "Averages 23 reasoning steps, 200+ URLs and 70+ queries per task. HLE rose from 8.6% to 26.9% pass@1 through RL. Without memory management it overflowed within 10 iterations; with it, runs exceeded 50. Ablation: the context-managed model used 30% more iterations and scored higher. A gamma-decay reward favors shorter trajectories. Cross-validation before answering emerged on its own.",
+   "url": "https://moonshotai.github.io/Kimi-Researcher/",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Kimi K2.5 Agent Swarm: trained parallel orchestration and its failure modes",
+   "date": "2026-01",
+   "detail": "Up to 100 sub-agents and 1,500 tool calls. Named failure modes: 'serial collapse' (falling back to one agent) and 'spurious parallelism' (spawning without real decomposition). 'Critical steps' metric: spawning helps only if it shortens the critical path. 3-4.5x fewer critical steps on wide search; 80% runtime reduction.",
+   "url": "https://www.kimi.com/blog/kimi-k2-5.html",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Context compaction helps a little even with a 1M-token window",
+   "date": "2026-07-16",
+   "detail": "Kimi K3 BrowseComp: compaction at 300K tokens (the Claude model-card strategy) about 91.2 vs 90.4 with the full 1M context and no management. Qwen3.5-397B reports discard-all beating simple context folding (69.0).",
+   "url": "https://www.kimi.com/blog/kimi-k3",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak"
+  },
+  {
+   "claim": "Microsoft Researcher: plan, reason-retrieve-review loop with a diminishing-returns stopping rule",
+   "date": "2025-03-25",
+   "detail": "Phase P0 plans and may ask clarifying questions. Then loop Reason, Retrieve, Review onto a scratch pad, and stop when the marginal insight ΔI drops below ε. Broad-but-shallow retrieval first, then zoom in. Enterprise queries need 30-50% more iterations. Vs Copilot Chat on 1K queries: accuracy +88.5%, completeness +70.4%, relevance +25.9%, utility +22.2%; ~10.1 sources per answer.",
+   "url": "https://techcommunity.microsoft.com/blog/microsoft365copilotblog/researcher-agent-in-microsoft-365-copilot/4397186",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Manus context-engineering lessons for long tool loops",
+   "date": "2025-07",
+   "detail": "KV-cache hit rate is the key metric: input-to-output ratio ~100:1; cached Sonnet input costs $0.30/MTok vs $3 uncached. ~50 tool calls per task. A todo.md the agent keeps rewriting puts the plan back into recent attention. The file system serves as context, with restorable compression (drop page text, keep the URL). Leave failed actions in context so the model adapts. Mask tools instead of removing them.",
+   "url": "https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus",
+   "evidence_type": "expert-opinion",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Tongyi DeepResearch Heavy Mode rebuilds a small workspace every round around an evolving report",
+   "date": "2025-09-16",
+   "detail": "30B-A3B model; ReAct mode: BrowseComp 43.4, HLE 32.9. IterResearch rebuilds a streamlined workspace each round from the previous round's key outputs and a central evolving report, to avoid 'cognitive suffocation' and 'noise pollution'. Research-Synthesis: parallel researchers, then a synthesis agent.",
+   "url": "https://tongyi-agent.github.io/blog/introducing-tongyi-deep-research/",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "xAI documents little architecture; Grok 4 Heavy uses parallel test-time compute",
+   "date": "2025-07-09",
+   "detail": "Grok 3 DeepSearch (Feb 2025) 'reason[s] about conflicting facts'. Grok 4 is RL-trained for tool use. Grok 4 Heavy: 'parallel test-time compute, which allows Grok to consider multiple hypotheses at once'; 50.7% on HLE text-only.",
+   "url": "https://x.ai/news/grok-4",
+   "evidence_type": "documented-design",
+   "strength": "weak"
+  },
+  {
+   "claim": "With model and budget fixed, the search backend alone moved accuracy by about 13 points",
+   "date": "2026-04",
+   "detail": "Parallel's shared harness: one GPT-5.4 agent, web search + fetch, MAX_TOOL_CALLS=25. BrowseComp: Parallel 53%, Tavily 42%, Exa 40%. With such small budgets, scores sit far below the ~83% that GPT-5.4 at xhigh reaches in OpenAI's own setup. Vendor benchmark.",
+   "url": "https://parallel.ai/blog/parallel-search-api",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak"
+  },
+  {
+   "claim": "Third-party audit: deep research citations are often wrong",
+   "date": "2025-09-02",
+   "detail": "DeepTRACE: deep-research configurations reduce overconfidence but still have large fractions of unsupported statements, are highly one-sided on debate queries, and show citation accuracy of 40-80% across systems.",
+   "url": "https://arxiv.org/abs/2509.04499",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Deep research outputs vary a lot between identical runs",
+   "date": "2026-02-26",
+   "detail": "Variance comes from information acquisition, compression and inference; inference and early-stage randomness dominate. Structured output plus ensembled query generation cut stochasticity by 22% on DeepSearchQA.",
+   "url": "https://arxiv.org/abs/2602.23271",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  }
+ ],
+ "techniques": [
+  {
+   "name": "Orchestrator-worker fan-out with detailed briefs",
+   "description": "The lead classifies the query, writes 3-5 subagent briefs (objective, output format, sources and quality bar, tools, boundaries, call budget) and launches them in parallel. Subagents return condensed findings, about 1-2k tokens, and write details to files.",
+   "evidence": "Anthropic: +90.2% vs single agent (internal eval), up to 90% faster. Opus 4.6: about 84 to 86.8 on BrowseComp. GPT-5.6 ultra: 90.4 to 92.2. Gains are large when the single agent is weak and small at the frontier.",
+   "applicability": "Claude Code: Agent/Task subagents, or a workflow script with parallel()/pipeline() and schema outputs. Codex: GPT-5.6 multi-agent/ultra where available, otherwise a sequential procedure. Each subagent has its own context and tool calls, so total research volume grows with the number of subagents.",
+   "cost_or_risk": "About 15x chat tokens. Duplicated work from vague briefs. Over-spawning on simple queries. More contamination exposure in evals.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://github.com/anthropics/claude-cookbooks/blob/main/patterns/agents/prompts/research_lead_agent.md"
+   ]
+  },
+  {
+   "name": "Explicit effort tiers by query type",
+   "description": "Classify the query as straightforward, breadth-first or depth-first. Map each type to agent count and per-agent tool budget, and stop at diminishing returns.",
+   "evidence": "Anthropic rules (1 agent / 3-10 calls; 2-4 subagents x 10-15; >10 subagents). OpenAI max_tool_calls. Gemini DR vs Max (~80 vs ~160 searches). Exa Low/Medium/High and Parallel Ultra tiers.",
+   "applicability": "Put a small table in SKILL.md (quick / standard / deep). The user or the Plan module picks the tier, defaulting from query type.",
+   "cost_or_risk": "Wrong classification wastes budget or under-researches.",
+   "urls": [
+    "https://github.com/anthropics/claude-cookbooks/blob/main/patterns/agents/prompts/research_subagent.md",
+    "https://ai.google.dev/gemini-api/docs/deep-research"
+   ]
+  },
+  {
+   "name": "Clarify, then rewrite into a research brief (or an editable plan)",
+   "description": "Before research, ask 2-6 pivotal clarifying questions if needed, then rewrite the request into first-person research instructions. Keep every user detail, mark unspecified dimensions as open, and ask for tables where useful.",
+   "evidence": "Documented in ChatGPT DR (gpt-4.1 clarifier and rewriter), Gemini collaborative planning and Microsoft P0. No published ablation.",
+   "applicability": "Do this in the conversation before any fan-out (Claude Code workflows allow no mid-run input). The brief is an artifact the Plan module can create and edit.",
+   "cost_or_risk": "Over-asking adds friction. OpenAI notes that rewriting an underspecified prompt broadly causes verbosity and latency.",
+   "urls": [
+    "https://developers.openai.com/api/docs/guides/deep-research",
+    "https://ai.google.dev/gemini-api/docs/deep-research"
+   ]
+  },
+  {
+   "name": "Draft-first, gap-driven search (test-time diffusion)",
+   "description": "Write an early skeleton report from internal knowledge, marked with uncertain claims and gaps. Generate the next searches from the draft's gaps. Revise the draft after each wave by adding or verifying content. Write the final report from the revision history.",
+   "evidence": "TTD-DR: 69.1% and 74.5% win rates vs OpenAI DR; self-evolution alone 60.9% / 59.8%; best quality per unit of latency.",
+   "applicability": "Lead writes draft.md before wave 1, and each wave's briefs target the draft's open gaps. This directly fixes the '8-second synthesis' failure: synthesis becomes continuous.",
+   "cost_or_risk": "Anchoring on wrong prior beliefs. The draft must flag which claims came from internal knowledge, and those claims must be verified or dropped.",
+   "urls": [
+    "https://arxiv.org/abs/2507.16075"
+   ]
+  },
+  {
+   "name": "Independent parallel attempts with selection or fusion",
+   "description": "Run 2-4 independent research passes, differing in seed, angle or model. Then either pick the most confident or best-supported answer, or have a judge list consensus, contradictions, unique insights and blind spots before writing the final report.",
+   "evidence": "BrowseComp best-of-N +15-25%. ChatGPT agent HLE 41.6 to 44.4 (8 attempts). Self-fusion on DRACO +6.7 (58.8 to 65.5). DeepSearchQA oracle pass@8 85.7 vs 67.2. GPT-5.6 ultra and Grok 4 Heavy.",
+   "applicability": "A workflow parallel() over 2-3 full researcher pipelines, then a judge agent. Offer it as the 'deep' tier.",
+   "cost_or_risk": "About 2-4x cost. No compute-matched comparison against one run with double the budget has been published.",
+   "urls": [
+    "https://openrouter.ai/blog/announcements/fusion-beats-frontier/",
+    "https://arxiv.org/abs/2504.12516"
+   ]
+  },
+  {
+   "name": "Context isolation and restorable compression",
+   "description": "Keep raw pages out of the lead's context. Subagents read pages and return distilled findings. Notes and sources go to files that keep URL, title, date and short verbatim quotes, so dropped content can be re-fetched. The lead keeps re-stating its plan and todo list, and failed tool calls stay visible.",
+   "evidence": "Kimi-Researcher: context management took runs from under 10 to over 50 iterations, +30% iterations, better accuracy. Kimi K3: compaction 91.2 vs 90.4. Opus 4.6 compacts at 50k. Manus restorable compression and todo.md. Tongyi IterResearch.",
+   "applicability": "Plain Markdown/JSONL files in a run folder. Workflow script variables hold intermediate results so the lead's context holds only the answer.",
+   "cost_or_risk": "Over-aggressive summarization loses details. Tune compaction for recall first.",
+   "urls": [
+    "https://moonshotai.github.io/Kimi-Researcher/",
+    "https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus",
+    "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+   ]
+  },
+  {
+   "name": "Separate post-hoc claim and citation verification",
+   "description": "After the report is written, a fresh-context verifier, or several voting verifiers, extracts the key claims and checks each against the saved quote or URL. It drops or flags unsupported claims, and marks claims it could not check as unverified, not refuted.",
+   "evidence": "Anthropic CitationAgent. Claude Code /deep-research claim voting and filtering. Separate evaluators are more tractable than self-critique. Audits show 40-80% citation accuracy in commercial systems, and DRACO's weakest axes are factual accuracy and citation quality.",
+   "applicability": "One verification phase, as a workflow pipeline over claim clusters or a single verifier subagent, replacing VAFER's per-step sealed audits and hash-bound reviews. Deterministic helpers check that quoted text appears in saved sources.",
+   "cost_or_risk": "Verifier leniency (agents 'talk themselves' into approving). Re-fetching costs calls. Only worth it on tasks where errors are likely.",
+   "urls": [
+    "https://github.com/anthropics/claude-cookbooks/blob/main/patterns/agents/prompts/citations_agent.md",
+    "https://code.claude.com/docs/en/workflows",
+    "https://www.anthropic.com/engineering/harness-design-long-running-apps"
+   ]
+  },
+  {
+   "name": "Diminishing-returns stopping rule with a coverage checklist",
+   "description": "Stop when a wave adds little new insight (ΔI < ε) or the budget runs out. Before stopping, check the brief's required sub-questions or entities. Keep absence of evidence apart from evidence of absence, and don't pad lists with low-confidence items.",
+   "evidence": "Microsoft Researcher ΔI<ε rule. Anthropic 'STOP FURTHER RESEARCH' at diminishing returns. DeepSearchQA: premature stopping and hedging leave a ~15-pt F1 vs fully-correct gap. Kimi gamma-decay reward for efficiency.",
+   "applicability": "Lead records new-claim counts per wave in its progress file. The workflow loops 'until two rounds add nothing new', as in the documented workflow example pattern.",
+   "cost_or_risk": "An ε that is too strict cuts research short; one that is too loose wastes calls.",
+   "urls": [
+    "https://techcommunity.microsoft.com/blog/microsoft365copilotblog/researcher-agent-in-microsoft-365-copilot/4397186",
+    "https://arxiv.org/abs/2601.20975"
+   ]
+  },
+  {
+   "name": "Start wide, then narrow; fetch full pages",
+   "description": "Short, broad queries (under 5 words) first, then narrower ones. Always fetch full pages for promising hits rather than relying on snippets. Prefer primary sources and flag speculation, aggregators and marketing language.",
+   "evidence": "Anthropic prompt lessons and subagent prompt. Human testers found SEO-farm bias. OpenAI added a 'restrict to trusted sites' option in Feb 2026.",
+   "applicability": "Pure prompt guidance in subagent briefs; costs nothing.",
+   "cost_or_risk": "Low.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system"
+   ]
+  },
+  {
+   "name": "Durable, resumable run state",
+   "description": "Persist the plan, progress and intermediate results outside the context window, so a crash or interruption resumes rather than restarts.",
+   "evidence": "Gemini async task manager with shared planner/task state. Anthropic resume-from-checkpoint and Managed Agents session log (p50 TTFT -60%). Claude Code workflows resume within a session.",
+   "applicability": "A run folder holding brief.md, progress.md, sources.jsonl, notes/ and draft.md. Workflow runtime caching of each agent's result.",
+   "cost_or_risk": "Low. Avoid turning state files into mandatory ceremony.",
+   "urls": [
+    "https://gemini.google/overview/deep-research/?hl=en",
+    "https://www.anthropic.com/engineering/managed-agents"
+   ]
+  },
+  {
+   "name": "Code-mediated tool orchestration",
+   "description": "Let the model write small scripts that batch-fetch, filter and extract, so bulky intermediate data never enters its context.",
+   "evidence": "Anthropic Programmatic Tool Calling: -37% tokens on complex research tasks; accuracy 46.5 to 51.2 on GIA.",
+   "applicability": "Shell plus Python in both hosts (curl, or a saved fetch output, then extract only the relevant lines). Optional, for data-heavy tasks.",
+   "cost_or_risk": "Script bugs. Prompt-injection risk from fetched content run in a shell.",
+   "urls": [
+    "https://www.anthropic.com/engineering/advanced-tool-use"
+   ]
+  },
+  {
+   "name": "Rigorous eval protocol for research harnesses",
+   "description": "Use tasks drawn from real users with rubrics (DRACO), exhaustive-list tasks with precision/recall (DeepSearchQA), and hard retrieval (BrowseComp/BrowseComp-Plus). Block benchmark domains. Run 5 or more trials per arm. Compare against compute-matched baselines. Use isolated per-dimension judges calibrated against humans. Read transcripts. Remove one component at a time.",
+   "evidence": "Anthropic evals guidance (saturation, pass@k/pass^k, isolated judges). The DRACO judge shifts scores 10-25 pts. Contamination found by Anthropic, OpenRouter and OpenAI. Stochasticity paper.",
+   "applicability": "Rebuild VAFER's validation: DRACO is open (HF perplexity-ai/draco, judge prompt released). Use non-famous or recent topics, and report cost, time and tokens.",
+   "cost_or_risk": "Eval cost. Judge bias toward the judge's own vendor (the Opus 4.6 judge on Anthropic DRACO rows).",
+   "urls": [
+    "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+    "https://www.perplexity.ai/hub/blog/evaluating-deep-research-performance-in-the-wild-with-the-draco-benchmark"
+   ]
+  },
+  {
+   "name": "Persistent research memory for follow-ups and reuse",
+   "description": "Keep prior findings, with sources and dates, retrievable for follow-up questions and later sessions.",
+   "evidence": "Gemini: 1M context plus RAG so the system 'remember[s] everything it has learned during that chat session'. Anthropic memory tool and NOTES.md pattern. Fable 5 gained 3x more than Opus 4.8 from file-based memory (game task, vendor claim).",
+   "applicability": "The Memory module indexes report.md and sources.jsonl by topic and date. DeepResearch starts with a memory lookup and re-verifies only stale or contested items.",
+   "cost_or_risk": "Stale facts; needs date stamps and freshness rules.",
+   "urls": [
+    "https://gemini.google/overview/deep-research/?hl=en",
+    "https://www.anthropic.com/news/claude-fable-5-mythos-5"
+   ]
+  }
+ ],
+ "anti_patterns": [
+  {
+   "name": "Bookkeeping that spends budget and attention without adding information",
+   "why": "Measured performance tracks useful tokens and tool calls spent on research (80% of variance). Ceremony that uses calls and attention, such as recovery actions on 'partial' captures or 6-7 minutes of record integration, takes away from research and synthesis.",
+   "evidence": "Anthropic variance analysis; Anthropic: 'every component in a harness encodes an assumption about what the model can't do on its own'; VAFER telemetry (8-second synthesis, time-cap overruns in 3/5 runs).",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://www.anthropic.com/engineering/harness-design-long-running-apps"
+   ]
+  },
+  {
+   "name": "Vague subagent briefs",
+   "why": "They cause duplicated searches and gaps.",
+   "evidence": "'Research the semiconductor shortage' led to 3 subagents overlapping on the same subtopics.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system"
+   ]
+  },
+  {
+   "name": "Over-spawning, or spurious and collapsed parallelism",
+   "why": "Spawning agents that don't shorten the critical path only adds overhead. Defaulting to one agent wastes capacity the system has.",
+   "evidence": "Anthropic: 50 subagents for simple queries. Kimi PARL: 'serial collapse' and 'spurious parallelism'.",
+   "urls": [
+    "https://www.kimi.com/blog/kimi-k2-5.html"
+   ]
+  },
+  {
+   "name": "Generator grading its own work",
+   "why": "Self-evaluation is lenient. A separate, skeptically tuned evaluator works better, and only on tasks beyond the model's solo reliability.",
+   "evidence": "Anthropic harness-design post; the QA agent 'talk[ed] itself into deciding they weren't a big deal'.",
+   "urls": [
+    "https://www.anthropic.com/engineering/harness-design-long-running-apps"
+   ]
+  },
+  {
+   "name": "Routing everything through the lead's context",
+   "why": "Raw pages and full subagent transcripts cause context rot and lossy hand-offs.",
+   "evidence": "Anthropic appendix: subagents write to the filesystem and pass lightweight references back. Kimi overflowed within 10 iterations without context management.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://moonshotai.github.io/Kimi-Researcher/"
+   ]
+  },
+  {
+   "name": "Hedging and premature stopping",
+   "why": "Padding answer sets with low-confidence items lowers precision. Stopping when a source won't open loses recall.",
+   "evidence": "DeepSearchQA failure-mode analysis: GPT-5 Pro stopped on an unreadable Excel file; ~15-pt F1 vs fully-correct gap.",
+   "urls": [
+    "https://arxiv.org/abs/2601.20975"
+   ]
+  },
+  {
+   "name": "Evaluating on famous topics with tiny call budgets and n=2 per arm",
+   "why": "The ceiling effect plus run-to-run randomness hides real differences, and fixed small budgets favor the baseline with the least overhead.",
+   "evidence": "Frontier single agents are already 84-93% on BrowseComp. With 25 calls, GPT-5.4 drops to 40-53%. DRACO judge variance is 10-25 pts. Stochasticity paper.",
+   "urls": [
+    "https://arxiv.org/abs/2602.23271",
+    "https://parallel.ai/blog/parallel-search-api"
+   ]
+  },
+  {
+   "name": "Unblocked web evals",
+   "why": "Agents find leaked answers and rubrics online.",
+   "evidence": "Anthropic found 20+ BrowseComp leak sources and eval-aware decryption. OpenRouter's panel found the DRACO rubric and had to exclude domains.",
+   "urls": [
+    "https://www.anthropic.com/engineering/eval-awareness-browsecomp",
+    "https://openrouter.ai/blog/announcements/fusion-beats-frontier/"
+   ]
+  },
+  {
+   "name": "Integrity caveats in place of capability guidance",
+   "why": "Prompts should give heuristics at 'the right altitude' and canonical examples, not long lists of edge cases. Every extra token draws on a finite attention budget.",
+   "evidence": "Anthropic context-engineering guidance; VAFER docs are ~5,700 words dominated by caveats.",
+   "urls": [
+    "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+   ]
+  },
+  {
+   "name": "Letting the agent build arbitrary URLs or mix secrets with web browsing",
+   "why": "Prompt injection in fetched content can exfiltrate data through URLs.",
+   "evidence": "OpenAI DR blocks constructing arbitrary URLs. OpenAI and Gemini docs warn about exfiltration when web access and private data are combined.",
+   "urls": [
+    "https://cdn.openai.com/deep-research-system-card.pdf",
+    "https://developers.openai.com/api/docs/guides/deep-research"
+   ]
+  }
+ ],
+ "implications_for_vafer": [
+  "Turn DeepResearch from a bookkeeping layer into a capability layer. The proven levers are: more useful parallel research (subagents with their own budgets), better decomposition and briefs, synthesis driven by a draft, and one cheap verification pass at the end. Remove per-step sealed audits, staged declarations and hash-bound reviews from the critical path.",
+  "Treat the real Claude Code baseline as the bundled /deep-research workflow (fan-out, cross-check, claim voting), not plain chat. VAFER must beat it in a controlled test, or wrap it with what it lacks: memory reuse, a Plan-produced brief, draft-first gap targeting, effort tiers, optional independent second pass plus fusion, and persisted artifacts.",
+  "For Claude Code, ship the core as a workflow script (plugin workflows/ folder or project .claude/workflows/, not global config). Phases: Scope (brief + memory lookup, done in conversation since workflows take no mid-run input; pass the date via args) → Draft (skeleton + gap list) → Fan-out waves (parallel() researcher agents with JSON schema: claims[{text,url,quote,published,confidence}], gaps) → Stop when a wave adds little → Synthesize (lead revises the draft) → Verify (pipeline over claim clusters, vote; unverifiable claims marked as such) → Persist. For Codex, provide the same phases as a SKILL.md procedure using multi-agent/ultra where available, else sequential.",
+  "Replace the Python passage store and ref indirection (s<hex>@<rev>:p000001) with plain files both hosts read natively: brief.md, progress.md, sources.jsonl (url, title, published, retrieved, short verbatim quotes), notes/<agent>.md, draft.md, report.md. Keep the helper only for deterministic, optional checks off the critical path: quote-presence check, link/date sanity, dedupe, memory index. The retained-memory test already showed plain notes.md plus raw JSON is enough.",
+  "Add explicit effort tiers with budgets. Quick: no subagents, 3-10 calls. Standard: 3 subagents x ~10 calls. Deep: 5-10 subagents, then a verifier, plus an optional 2-run fusion, which gave +6.7 DRACO points for same-model self-fusion. Default the tier from query type (straightforward / breadth / depth) and let Plan override.",
+  "Make the draft-first loop the default synthesis method (TTD-DR evidence). The lead writes the draft before searching, marks claims from internal knowledge, aims each wave at the draft's gaps, and revises after each wave. This removes the '8-second synthesis' failure mode.",
+  "Check citations once, after writing, with a fresh-context skeptical verifier: CitationAgent-style or /deep-research-style voting. Audits show 40-80% citation accuracy in commercial systems, so this is where VAFER's integrity goal adds value. Measure it with DRACO's citation and factual-accuracy axes rather than asserting it.",
+  "Shrink SKILL.md to a lean capability guide using progressive disclosure: heuristics, the effort table, a brief template and 1-2 canonical example briefs. Move rare material to references. Cut the caveat-heavy text, which consumes the attention budget.",
+  "Fix the evaluation before the next version. Use a DRACO subset (open tasks, rubrics and judge prompt), a DeepSearchQA subset (exhaustive lists, stopping behavior), and BrowseComp-Plus or a blocklisted BrowseComp subset. Use non-famous or post-cutoff topics, at least 5 runs per arm, and an isolated judge per dimension. Include compute-matched controls (bare host with the same total budget, bare host run twice and merged, Claude Code /deep-research) and report quality alongside tokens, calls and time.",
+  "Don't evaluate under a fixed 16-web-call cap alone; that cap structurally favors the arm with the least overhead. Also report quality at equal total tokens and at scaled budgets, since subagents multiply calls.",
+  "Use component ablation: add or remove one harness element at a time and keep only what is load-bearing. Re-run on each new model release, since harness assumptions go stale (context resets became dead weight on Opus 4.5).",
+  "Memory interop: persist each run's report.md and sources.jsonl with topic tags and dates so the Memory module can answer follow-ups and seed future research, re-verifying only stale or contested items. Plan interop: the clarified research brief and effort tier are Plan artifacts the user can edit before launch, as in Gemini's collaborative planning.",
+  "Safety: treat fetched pages as untrusted. Never build URLs containing user data, and keep shell use on fetched content minimal."
+ ],
+ "open_questions": [
+  "No compute-matched study was found: does fusion or multi-agent beat a single agent given the same total tokens and tool calls on report-style tasks? The OpenRouter and Anthropic figures are not budget-matched.",
+  "How much of Perplexity's +10.7 DRACO points over plain Opus 4.6 comes from orchestration and how much from its proprietary search index? A host-tools skill can only capture the orchestration part.",
+  "Does VAFER-style orchestration beat Claude Code's bundled /deep-research on DRACO or DeepSearchQA, or should VAFER wrap it? This needs a direct test.",
+  "What do Codex's subagent and multi-agent capabilities and per-agent web budgets look like in late 2026, beyond GPT-5.6 'ultra' (4 agents, available in Codex for Plus and above)? This determines the Codex fallback design.",
+  "Optimal verification granularity and cost: one post-hoc verifier vs claim-level voting vs inline checks. Anthropic's 2025 single-judge finding conflicts with its 2026 isolated-judge advice.",
+  "No public ablation shows how much clarifying questions or rewriting improve research quality; all vendors use them as design choices.",
+  "How to verify quotes when host fetch tools return summarized or partial page content (the source of VAFER's 'omitted-lines' warnings). Should the verifier re-fetch raw pages with shell/curl?",
+  "How to measure the cross-session Memory benefit fairly, given that the control's notes.md plus raw JSON already scored 30/30 on retained-memory follow-ups."
+ ],
+ "sources": [
+  {
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "title": "How we built our multi-agent research system (Anthropic, 2025-06-13)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://github.com/anthropics/claude-cookbooks/tree/main/patterns/agents/prompts",
+   "title": "Anthropic cookbook: research_lead_agent.md, research_subagent.md, citations_agent.md",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+   "title": "Effective context engineering for AI agents (Anthropic, 2025-09-29)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents",
+   "title": "Effective harnesses for long-running agents (Anthropic, 2025-11-26)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/harness-design-long-running-apps",
+   "title": "Harness design for long-running application development (Anthropic, 2026-03-24)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/eval-awareness-browsecomp",
+   "title": "Eval awareness in Claude Opus 4.6's BrowseComp performance (Anthropic, 2026-03-06)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+   "title": "Demystifying evals for AI agents (Anthropic, 2026-01-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/advanced-tool-use",
+   "title": "Introducing advanced tool use (Anthropic, 2025-11-24)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/managed-agents",
+   "title": "Scaling Managed Agents: Decoupling the brain from the hands (Anthropic, 2026-04-08)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills",
+   "title": "Equipping agents for the real world with Agent Skills (Anthropic, 2025-10-16)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/news/claude-opus-4-6",
+   "title": "Introducing Claude Opus 4.6 (BrowseComp setup footnote, multi-agent 86.8%)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/news/claude-opus-4-8",
+   "title": "Claude Opus 4.8 announcement (dynamic workflows mention)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/news/claude-fable-5-mythos-5",
+   "title": "Claude Fable 5 and Mythos 5 announcement (memory claims)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://claude.com/blog/introducing-dynamic-workflows-in-claude-code",
+   "title": "Introducing dynamic workflows in Claude Code (2026-05-28)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/workflows",
+   "title": "Claude Code docs: Orchestrate subagents at scale with dynamic workflows (/deep-research bundled workflow, limits)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/anthropics/claude-agent-sdk-demos/tree/main/research-agent",
+   "title": "Claude Agent SDK demo: Multi-Agent Research System README",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://support.claude.com/en/articles/11088861-using-research-on-claude",
+   "title": "Use research on Claude (help center)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://openai.com/index/introducing-deep-research/",
+   "title": "Introducing deep research (OpenAI, 2025-02-02, with updates to 2026-02-10)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://cdn.openai.com/deep-research-system-card.pdf",
+   "title": "Deep Research System Card (OpenAI, 2025-02-25)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.12516",
+   "title": "BrowseComp: A Simple Yet Challenging Benchmark for Browsing Agents (OpenAI, 2025-04-16)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://developers.openai.com/api/docs/guides/deep-research",
+   "title": "OpenAI API: Deep research guide (deprecation to gpt-5.6-sol, clarification/rewriting, max_tool_calls)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/openai/openai-cookbook/tree/main/examples/deep_research_api",
+   "title": "OpenAI cookbook: Introduction to Deep Research API and Deep Research Agents notebooks",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://openai.com/index/introducing-chatgpt-agent/",
+   "title": "Introducing ChatGPT agent (OpenAI, 2025-07-17)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://openai.com/index/gpt-5-6/",
+   "title": "GPT-5.6 launch (ultra 4-agent mode, BrowseComp table)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://gemini.google/overview/deep-research/?hl=en",
+   "title": "Gemini Deep Research overview: How we built the first Deep Research",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://blog.google/innovation-and-ai/technology/developers-tools/deep-research-agent-gemini-api/",
+   "title": "Build with Gemini Deep Research (Google, 2025-12-11)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://ai.google.dev/gemini-api/docs/deep-research",
+   "title": "Gemini API: Deep Research agent docs (versions, collaborative planning, costs, limits)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2601.20975",
+   "title": "DeepSearchQA: Bridging the Comprehensiveness Gap for Deep Research Agents (2026-01-28)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2507.16075",
+   "title": "Deep Researcher with Test-Time Diffusion (TTD-DR, Google, 2025-07)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.perplexity.ai/hub/blog/introducing-perplexity-deep-research",
+   "title": "Introducing Perplexity Deep Research (2025-02-14)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.perplexity.ai/hub/blog/evaluating-deep-research-performance-in-the-wild-with-the-draco-benchmark",
+   "title": "Evaluating Deep Research performance in the wild with the DRACO benchmark (Perplexity, 2026-02-04)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.11685",
+   "title": "DRACO benchmark technical report (2026-02)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://openrouter.ai/blog/announcements/fusion-beats-frontier/",
+   "title": "Surpassing Frontier Performance with Fusion (OpenRouter, 2026-06-12)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://leaderboard.steel.dev/leaderboards/browsecomp/",
+   "title": "Steel.dev BrowseComp leaderboard (aggregated vendor reports, updated 2026-10-11)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://leaderboard.steel.dev/leaderboards/draco/",
+   "title": "Steel.dev DRACO leaderboard (updated 2026-10-11)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://moonshotai.github.io/Kimi-Researcher/",
+   "title": "Kimi-Researcher: End-to-End RL Training for Emerging Agentic Capabilities (2025-06-20)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.kimi.com/blog/kimi-k2-5.html",
+   "title": "Kimi K2.5 tech blog: Agent Swarm and PARL (2026-01)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.kimi.com/blog/kimi-k3",
+   "title": "Kimi K3 tech blog (BrowseComp compaction footnote, 2026-07)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://techcommunity.microsoft.com/blog/microsoft365copilotblog/researcher-agent-in-microsoft-365-copilot/4397186",
+   "title": "Researcher agent in Microsoft 365 Copilot (2025-03-25)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus",
+   "title": "Context Engineering for AI Agents: Lessons from Building Manus (2025-07)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://tongyi-agent.github.io/blog/introducing-tongyi-deep-research/",
+   "title": "Tongyi DeepResearch: A New Era of Open-Source AI Researchers (2025-09-16)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://x.ai/news/grok-4",
+   "title": "Grok 4 (xAI, 2025-07-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://x.ai/news/grok-3",
+   "title": "Grok 3 Beta and DeepSearch (xAI, 2025-02)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://mistral.ai/news/le-chat-dives-deep",
+   "title": "Le Chat dives deep: Deep Research mode (Mistral, 2025-07)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/MiroMindAI/MiroThinker",
+   "title": "MiroThinker README (interactive scaling, keep-5 context, H1 verification)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://parallel.ai/blog/parallel-search-api",
+   "title": "Parallel Search and Extract API benchmarks (shared GPT-5.4 harness, 25 tool calls)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.04499",
+   "title": "DeepTRACE: Auditing Deep Research AI Systems for Tracking Reliability Across Citations and Evidence (2025-09)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.23271",
+   "title": "Evaluating Stochasticity in Deep Research Agents (2026-02-26)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2609.37082",
+   "title": "Traverse: Learning When to Remember, Reset, and Redirect for Long-Horizon Web Search (2026-09)",
+   "read_depth": "abstract-or-snippet"
+  }
+ ]
+}

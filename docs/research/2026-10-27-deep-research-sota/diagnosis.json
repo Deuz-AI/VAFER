@@ -1,0 +1,269 @@
+{
+ "key": "internal-diagnosis",
+ "summary": "I compared VAFER with the bare-model control in four experiment generations: yalova-astra, yalova-v002, the v0.0.3 heldout exam and the v0.0.3 memory test. VAFER never scored better on any comparative quality metric, and it was slower every time.\n- **yalova-astra:** 21:57 vs 12:00; 5 vs 10 of 12 checks fully covered.\n- **yalova-v002:** 24:01 vs 20:41; 5 vs 8 of 12 checks fully covered.\n- **v0.0.3 exam:** mean score 98.5 (n=5) vs 99.4 (n=4); mean wall time 729.6 s vs 682.8 s; time-cap violations in 3/5 vs 1/4 runs.\n- **v0.0.3 memory test:** 29.67 vs 30.\n\nVAFER had three positive signals, none repeated in the exam:\n- Sampled citation support was better in astra (2 vs 1 on the ordinal scale).\n- The 1999 casualty scope was stated more clearly in v002.\n- A fresh-context examiner in the v0.0.3 development run sealed 10 gap candidates and added 8 questions, recovering two earlier omissions. That is subagent behaviour, not a helper feature, and the exam prohibited subagents.\n\nThe retained artifacts explain the result.\n- **No notes:** none of the 5 scored VAFER exam runs committed a single note.\n- **Boilerplate support:** each run pasted one identical support rationale onto every coverage row.\n- **Passage refs never reached the reader:** they sat in hidden HTML comments (R02 2, R03 14, R11 109), an appendix (R04 4) or nowhere (R09). Their only job was to pass `verify`.\n- **Self-audits added almost nothing:** 23 self-sealed candidates produced 1 new question.\n- **Record completion is post-report by design:** report anchors, hash-bound reviews and verify/finish all need the finished report. In R02 and R11 this bookkeeping pushed the run over the cap. R04 spent 255 s after its last report write and made zero edits, yet still lost points to a mislinked citation.\n- **Less web research:** with the same call caps, VAFER ran about 20% fewer queries and page operations than its paired controls (227 vs 283) and wrote 4–6× more bookkeeping bytes.\n\nJudge claim audits were the same in both arms: 81 of 88 VAFER paragraphs supported vs 74 of 81 for the control.\n\nThe evaluation could not have shown a better method anyway:\n- The prompts listed exactly the rubric's six coverage items.\n- The topics were famous ones.\n- The 720 s cap included the telemetry work, and subagents were banned.\n- 176 of 180 rubric items got full credit.\n- Acceptance was an absolute threshold, not a comparison with the control.\n- There was one LLM judge per topic, and the blinding leaked.\n- The memory responders were forbidden to use the VAFER helper.\n\nThe diagnosis \"integrity layer, not capability layer\" holds, with two corrections:\n- **Record integration is not VAFER-only:** control runs also logged 3–8.6 minute \"record integration\" windows (R08 516 s). These windows are self-reported and overlap other phases.\n- **The 8-second synthesis is a logging artifact:** R02's 8.6 s synthesis only marks the report-writing call. Control runs show the same pattern (R07 36 s, R08 45 s).",
+ "experiments": [
+  {
+   "name": "Fixed-corpus behavior trial (v0.1)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/behavior-trial/followup-answers.md",
+   "protocol": "Synthetic 5-file fixture corpus (tests/fixtures), one VAFER preparation agent, then a fresh agent answered 10 candidate questions; graded by the development coordinator; no control arm, no web (C:/Users/VECTOR/Documents/GitHub/VAFER/tests/evaluation.md section 7).",
+   "with_vafer_result": "27 passages retained, 14 notes, report.md + self-review.md; 10/10 follow-up answers preserved required distinctions (dent, cup sequence, false premise, injection treated as data, reversed measurement direction).",
+   "without_vafer_result": "No control arm was run.",
+   "conclusion": "Development regression only. The whole corpus fits in context, so it shows the store works, not that it adds value over plain files."
+  },
+  {
+   "name": "Yalova history, Astra with/without VAFER (earliest version; skill-snapshot lists only store.py/extract.py/research.py)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/yalova-astra-2026-10-26/comparison.md",
+   "protocol": "gpt-6-astra, 1 run per arm, 25 min / 24 web calls cap, 1,500–2,500-word Turkish report, 12 checks sealed by a fresh curator, A/B-labelled model evaluator (evaluator/report-assessment.md), 5-minute no-web retained-memory follow-up (evaluator/followup-assessment.md).",
+   "with_vafer_result": "21:57; 24 web calls; 1,902 words; 5 full / 7 partial of 12 checks; ordinal: factual 1, citation support 2, coverage 1, detail 2, contradictions 1; Pylai location overstated; follow-up 9/3, corrected by coordinator to 10 full/2 partial in 4:40; 25 partial sources, 8 notes, 5 custom scripts (110 lines).",
+   "without_vafer_result": "12:00; 24 web calls; 1,919 words; 10 full / 2 partial; factual 1, citation support 1, coverage 2, detail 2, contradictions 2; one unsupported causal claim (Crusader route); follow-up 10 full/2 partial in 4:09.",
+   "conclusion": "VAFER took 83% longer and fully covered half as many checks. Sampled citation support was its only advantage. Memory was equal."
+  },
+  {
+   "name": "Yalova history v0.0.2 paired repeat",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/yalova-v002-2026-10-26/comparison.md",
+   "protocol": "1 run per arm, same inherited model, 25 min / 24 web calls, known development topic, 12-check key reused from astra with amendments, graded by the coordinator who knew the labels (protocol.md, evaluator/assessment.md, metrics.json).",
+   "with_vafer_result": "24:01 (1,441 s); 23 calls = 53 queries / 112 opens / 44 finds; 540,988 raw chars; 5 full / 7 partial (17/24); 11/12 audited claim groups supported; 52 helper commands (5.9 s internal); 26 captures, 11 notes; 180 lines of custom Python (integrate.py, select_evidence.py, ...); honest 'partial'; better 1999 province/city casualty scope (Y12 2 vs 1).",
+   "without_vafer_result": "20:41 (1,241 s); 24 calls = 64 queries / 79 opens / 44 finds / 1 click; 580,676 raw chars; 8 full / 4 partial (20/24); 11/12 claim groups supported.",
+   "conclusion": "The coordinator preferred the control. VAFER took 16% longer with citation parity. Phase windows: acquisition 11:07 vs 4:20, record integration 18:49 vs 10:10 (overlapping)."
+  },
+  {
+   "name": "v0.0.3 development Yalova run with independent source examiner",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/yalova-audit.md",
+   "protocol": "VAFER only (no control): 600 s / 12 calls researcher cap plus a separate fresh source-only examiner (yalova-auditor/run-log.json, candidates.json); coordinator audit of 4 claims.",
+   "with_vafer_result": "819 s (219 s over cap); report saved 50 s late, finalization 169 s after the report; examiner 197 s / 4 calls sealed 10 candidates, which added 8 independent-source questions (16 total; 9 ended 'blocked', 7 'covered' per yalova-v003/run.json); 1096 Kibotos and Pylai alternatives now covered; truncated read-many/batch output, segmentation correction, finalization overrun.",
+   "without_vafer_result": "No control.",
+   "conclusion": "Independent gap discovery added coverage. Bookkeeping still overran. The implementation froze at 13:10:53 (implementation-freeze.json), before this run ended at 13:12:50, so its failures went into the exam unfixed."
+  },
+  {
+   "name": "v0.0.3 heldout exam (Magna Carta / Antarctic ozone 2022 / QUIC v1)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/comparison.md",
+   "protocol": "3 topics x 2 repeats x 2 arms, fresh contexts, 720 s incl. instructions and packaging, 16 web calls / 64 queries / 80 other ops, no subagents, both arms told to keep raw outputs and do a source-driven self-audit (researcher-instructions.txt). One fresh LLM judge per topic, 20 items x 5 points, 0/0.5/1 multipliers (exam-curator/protocol.json, evaluations/*/assessment.md). Ledger: results.json, resource-summary.json.",
+   "with_vafer_result": "R11 100 (776 s), R02 97.5 (720.1 s), R09 100 (769 s), R04 95 (699 s), R03 100 (684.1 s), R12 interrupted. Mean 98.5, mean wall 729.6 s (median 720.1), 3/5 over cap. Web: 58 calls, 71 queries, 210 ops. Judge claim audits 81/88 supported, 6 partly, 1 unverified. Deductions: R02 F1 (seal/fidelity claims cited only to the City of London timeline); R04 F3 (termination mechanism cited to the Australian Antarctic page) and E3 (chemical evidence does not discriminate competing causes).",
+   "without_vafer_result": "R05 100 (778 s), R08 100 (674 s), R10 97.5 (635 s), R07 100 (644 s); R01 and R06 interrupted. Mean 99.4, mean wall 682.8 s (median 659), 1/4 over cap. Web: 46 calls, 83 queries, 200 ops. Claim audits 74/81 supported, 5 partly, 2 unverified. Deduction: R10 F4 (overstated Solomon 1986).",
+   "conclusion": "Paired by topic/repeat: H/1 100 vs 100 (-2 s), H/2 97.5 vs 100 (+46 s), S/2 95 vs 97.5 (+64 s), T/2 100 vs 100 (+40 s). No pair favoured VAFER. Every score sits at the rubric ceiling. Acceptance failed."
+  },
+  {
+   "name": "v0.0.3 retained-memory follow-up",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/memory-summary.json",
+   "protocol": "Fresh responder per run, 3 undisclosed questions per topic, 240 s, no web, access only to that run's retained files; responders could not read the skill or code (memory-instructions.txt); graded by the same topic judges with their prior context.",
+   "with_vafer_result": "R02 30, R03 30, R04 30, R09 28 (missing Kigali/phasedown link), R11 30, R12 30 (interrupted run) = 29.67/30. No responder invoked research.py; they used rg, report.md, raw captures and original.txt files (memory-runs/R02/run-log.json, R12/run-log.json).",
+   "without_vafer_result": "30 x 6 = 30.00/30, including interrupted R01/R06, answered from notes.md + raw-web JSON.",
+   "conclusion": "Ceiling result, and VAFER's retrieval layer was never exercised. Plain notes + raw JSON were enough."
+  },
+  {
+   "name": "Batch vs individual CLI microbenchmark",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/checkpoint-benchmark/results.json",
+   "protocol": "Synthetic: 8 ingests + 8 note commits, 3 interleaved repeats, separate workspaces; no model, web or quality. Not a with/without-VAFER comparison.",
+   "with_vafer_result": "Batch mode: 1 CLI call, median 452.41 ms (helper internal about 324–374 ms).",
+   "without_vafer_result": "No non-VAFER arm. Individual VAFER commands: 16 CLI calls, median 2,617.96 ms.",
+   "conclusion": "Batch only cuts the helper's own CLI overhead, which was never the bottleneck: live runs spent 0.7–3.1 s total in the helper."
+  }
+ ],
+ "version_history": [
+  {
+   "version": "0.1 (earliest dev version; skill-snapshot in work/yalova-astra-2026-10-26/skill-snapshot.json)",
+   "change": "Local evidence store (immutable source revisions, passage refs, notes with evidence arrays and dependency invalidation), run.json with tasks/coverage/gaps/reviews, verify/finish, TXT/MD/HTML/EPUB/PDF extraction; 61 offline tests. During the behavior trial: bounded lock-wait added after parallel-search cache-lock failures, reading guidance added for truncated passage batches (tests/evaluation.md section 7).",
+   "measured_effect": "Behavior trial 10/10 follow-ups (no control). Yalova-astra: 21:57 vs 12:00, 5 vs 10 full checks, citation support 2 vs 1, memory equal (10/2 vs 10/2 after correction).",
+   "motivation": "README goal: persistent source-linked knowledge for follow-up questions and honest partial outcomes."
+  },
+  {
+   "version": "0.0.2",
+   "change": "Added planning.py (next/blocked actions from coverage/gaps/tasks), capture diagnostics (host-lines-omitted, truncation-marker, website-chrome-only), search.py (FTS5 phrase/source-filtered search with incremental index), read-many, elapsed_ms metrics; 91 tests (tests/evaluation.md section 8).",
+   "measured_effect": "Yalova v002: VAFER 24:01 vs 20:41, 5/12 vs 8/12 full checks (VAFER's own count unchanged from astra's 5/12), citation parity 11/12. The run still needed 180 lines of custom scripts, and 7 broad 'covered' rows hid gaps (work/yalova-v002-2026-10-26/comparison.md). No improvement shown.",
+   "motivation": "Astra conclusion: 'reduce record work, notice missing periods earlier, recheck disputed place names' (work/yalova-astra-2026-10-26/comparison.md line 54), plus truncation and consent-page captures. The response added machinery rather than removing record work."
+  },
+  {
+   "version": "0.0.3",
+   "change": "Question provenance (origin) and parent/child questions; staged evidence/context_read/support/report_anchor/answer_note; audit-seal/audit-resolve; ID-based run patch; batch with returned-ref aliases; open-topic vs finite-work reading_scope; capture warnings turned into recovery actions; hash-bound reviews kept; docs trimmed (SKILL 576→546 words, 4 references 6,386→4,731); 113 tests (work/v003-2026-10-26/development-log.md, implementation-report.md).",
+   "measured_effect": "Batch CLI 2,618→452 ms (synthetic only). Dev Yalova run 819 s vs 600 s cap; the independent examiner added 8 questions. Heldout exam at ceiling: 98.5 vs 99.4, +47 s mean wall, 3/5 vs 1/4 over cap. Memory 29.67 vs 30. In the exam the new staged fields were filled with one boilerplate rationale per run, after the report; the self-audit seal added 1 question across 23 candidates.",
+   "motivation": "The six v0.0.2 failures in the development-log.md table: broad rows hid subquestions, questions were derived after drafting, valid refs were taken for adequate answers, whole-list rewrites and custom scripts, partial captures treated as whole-field failure, diagnostics that changed nothing. Every response added more records."
+  }
+ ],
+ "time_and_overhead": "Wall time (work/v003-2026-10-26/results.json): VAFER averaged 729.6 s (median 720.1) and the control 682.8 s (median 659). In matched pairs VAFER was 46, 64 and 40 s slower, and 2 s faster in H/1. Cap violations: 3/5 VAFER vs 1/4 control.\n\nEarlier generations: astra 21:57 vs 12:00; v002 24:01 vs 20:41; the v0.0.3 dev run took 819 s against a 600 s cap.\n\nThe helper's own CPU time is negligible: 0.7–3.1 s per exam run (R02 1.82 s, R03 1.45 s, R04 0.99 s, R11 ≥3.06 s) and 5.9 s for 52 commands in v002. The overhead is all on the model side. Times below come from the run-logs and file modification times in exam-runs/R*.\n\n1. **Startup.** First web call came at about 41 s for VAFER (R02 43, R03 43, R09 30, R11 47) vs about 22 s for the control (R05 24, R07 16, R08 26, R10 24). The difference is reading about 5,700 words of skill docs, doctor, init and the initial map.\n\n2. **File preparation.** VAFER runs split the host's web JSON into per-source capture files before ingesting:\n   - R02: 12 files, 123 KB\n   - R03: 10 files, 218 KB\n   - R04: 5 files, 130 KB, via a PowerShell splitter whose first pass dropped segments\n   - R09: 17 files, 257 KB, including combined and never-ingested files\n   - R11: 15 files, 156 KB, after one splitting script failed\n\n3. **Bookkeeping authored by the model.** VAFER JSON inputs were 20.1 / 26.2 / 13.9 / 10.9 / 27.4 KB (R02 / R03 / R04 / R09 / R11), for example R02 final-integration.json at 11.6 KB and R11 checkpoint-final.json at 16.7 KB. Control notes plus self-audit were only 3.2–5.5 KB.\n\n4. **Helper output read back into context.**\n   - Per run: 72–323 KB.\n   - Host-reported token counts: R04 about 29k, R11 about 28k (one read-many 13.9k), R09 about 13k.\n   - R03's single read-many was 255,672 bytes.\n   - R09's batch output was truncated and had to be re-run.\n\n5. **Shell calls.** VAFER used 7–21 shell/helper commands per run (R02 15 exec, R04 21 helper commands) vs 3–4 exec calls for the control.\n\n6. **Time to report and after it.** The last report write came at a similar point in both arms: VAFER 545 / 609 / 444 / 658 / 722 s (R11's first save at 643 s) vs control 624 / 594 / 531 / 563 s. The difference is the tail after the report:\n   - VAFER: 174 / 75 / 255 / 111 / 55 s (mean 134; R11 133 s counted from its first save).\n   - Control: 155 / 50 / 143 / 72 s (mean 105).\n   - R02 spent 99 s on integrate/verify/finish after the report and ended 0.1 s over the cap.\n   - R11's log says the report was saved before the deadline and the canonical refs and checkpoint finished after it.\n   - R04 spent 255 s post-report on read-many, 4 searches, coverage, audit-resolve, reviews, verify and finish, with no report edits.\n\n7. **Web effort displaced.** With the same call caps, VAFER pairs ran 227 queries plus opens/finds vs 283 for the control (-20%; fewer in 3 of 4 pairs) and fetched 365 KB vs 396 KB of raw web text on average. Web calls were equal (11.6 vs 11.5).\n\n8. **Caveat on phase telemetry.** Phase windows were self-reported and overlap. \"Record integration\" ran 392–436 s in VAFER runs but also 180–516 s in control runs (R08 516 s). Synthesis windows are similarly unreliable: R02 8.6 s vs R07 36 s and R08 45 s, because R07's own note says the boundary marks only the report-writing call. Phase durations are not attributable; the file timelines above are more reliable.\n\nBoth arms also carried heavy protocol telemetry: 17–19 apply_patch calls and up to 30 clock calls per run.",
+ "failure_modes": [
+  {
+   "description": "Mandatory record completion happens after the report, eats the deadline and cannot improve the report. R02 ran integrate/verify/finish 99 s after its report and ended 720.1 s, over the cap. R11 saved its report at 13:23:05, before the deadline, but its canonical refs and checkpoint finished at 13:24:29, after it. R04 spent 255 s after its last report write (19:16:09) on read-many, searches, coverage, audit-resolve, reviews, verify and finish, made zero edits, and still lost 5 points (F3 mislinked citation, E3 weak explanation).",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R11/run-log.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R02/run-log.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R04/run-log.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/evaluations/S/assessment.md",
+   "root_cause": "In store.py, question_progress needs report_anchor to appear in the report text, update() binds passed reviews to the report sha256, and verify/finish require final reviews. Verification is an attestation step, not a revision step."
+  },
+  {
+   "description": "Canonical passage refs never reach the reader; they exist to pass verify. Locations: R02 2 refs in a closing HTML comment, R03 14 in a comment, R11 109 in a comment, R04 4 in an appendix, R09 none. Every reader-facing citation, in all 9 reports, is a URL. In v002 the researcher wrote report-template.md with hidden placeholders and integrate.py to resolve them.",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R02/report.md; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R11/report.md; C:/Users/VECTOR/Documents/GitHub/VAFER/work/yalova-v002-2026-10-26/with-vafer/integrate.py",
+   "root_cause": "The verify report-citations check needs at least one [[ref]] (store.py verify), while web research is naturally cited by URL. The refs add indirection without informing any claim."
+  },
+  {
+   "description": "Semantic declarations turned into boilerplate. Each VAFER run used one identical support rationale for all coverage rows (R02 8 rows, R03 7, R04 7, R11 6), and all 15 exam reviews were 'self'/'passed' with generic details. R11 rows list 76 and 56 evidence refs. Citation-linkage errors still occurred (R02 F1, R04 F3), and judge claim audits match the control (81/88 vs 74/81 supported).",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R02/final-integration.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R11/checkpoint-final.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/evaluations/H/scores.json",
+   "root_cause": "The schema demands per-question semantic judgments under time pressure, and the model satisfies it cheaply. Checks work at question granularity, but quality is decided at paragraph and claim granularity."
+  },
+  {
+   "description": "The note system went unused: zero notes were committed in all five scored VAFER exam runs (empty notes/ directories). The control's useful knowledge capture was a 2–4 KB notes.md evidence map with source cautions.",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R02/notes; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R05/notes.md",
+   "root_cause": "Committing a note needs ingestion first, current refs and evidence arrays. A 12-minute budget made it the first thing dropped, and the skill offers no lightweight alternative."
+  },
+  {
+   "description": "Ingestion friction: the helper cannot take host web output, so every run hand-built capture files. R04's splitter dropped segments on its first pass; R11's splitting script failed; R09 made 17 files including a combined file never ingested; v002 wrote 180 lines of custom Python; astra wrote 5 scripts.",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R04/run-log.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R09/run-log.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/yalova-v002-2026-10-26/with-vafer",
+   "root_cause": "The store's unit is one local file per source, while the host's unit is a multi-source tool response (Codex web.run). There is no adapter."
+  },
+  {
+   "description": "Oversized helper JSON floods the context and gets truncated. R03's read-many returned 255,672 bytes. Host token counts were about 29k (R04), 28k (R11) and 13k (R09). R09's batch was truncated and re-run, and the yalova-v003 read-many was truncated too.",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R03/raw/helper-005-read.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R11/helper-read-many-raw.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/yalova-audit.md",
+   "root_cause": "Every response returns full ref lists, status and next_actions, or passage text the model has already seen in the web output."
+  },
+  {
+   "description": "Capture diagnostics are structurally noisy on Codex. host-lines-omitted fired on R03 10/10, R12 15/16, R11 9/15, R09 3/4 and R02 2/10 captures, each creating a 'capture' recovery action.",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R03/captures/rfc9002.txt; C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/extract.py",
+   "root_cause": "Codex opens are windowed by design (RFC 9002 capture: 'Total lines: 1437', 264 lines shown), and _capture_quality treats a normal page window as an incomplete capture."
+  },
+  {
+   "description": "Research effort is displaced. Under the same caps VAFER ran fewer queries and opens/finds in 3 of 4 pairs (227 vs 283), fetched less raw text (365 vs 396 KB), made its first web call about 18 s later, and authored 4–6x more bookkeeping bytes.",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/results.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs",
+   "root_cause": "Attention and time go to schemas and record upkeep. The instructions contain almost no guidance on research technique."
+  },
+  {
+   "description": "Self-audit seal/resolve adds essentially no coverage. Across 6 exam runs, 23 self-sealed candidates gave 21 mapped to existing user-origin rows, 1 exclusion (R02 geography) and 1 new question (R09 'aerosols').",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R04/run.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R09/checkpoint-batch.json",
+   "root_cause": "A same-context audit shares the researcher's blind spots, and the prompt had already listed the subquestions. The hash preserves order, not independence."
+  },
+  {
+   "description": "Run status and outcome labels have no relation to quality. R09 left all 8 rows 'open', reviews pending and status 'running', and scored 100. R04 finished 'complete-within-scope' and scored 95; R02 finished 'partial' and scored 97.5.",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R09/run.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R04/run.json",
+   "root_cause": "Structural checks measure whether the records are complete, not whether the answers are good."
+  },
+  {
+   "description": "Development loop anti-pattern: each version answered observed failures by adding records. VAFER's own result barely moved (5/12 full checks in both astra and v002; exam parity). The v0.0.3 freeze (13:10:53) came before the dev validation run ended (13:12:50), and the exam was dispatched at 13:11:45, so known usability failures were never fixed.",
+   "evidence_path": "C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/implementation-freeze.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/dispatch-plan.json; C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/development-log.md",
+   "root_cause": "The optimisation target was integrity invariants and unit tests (61→91→113), not measured research outcomes against the control."
+  }
+ ],
+ "components": [
+  {
+   "component": "Evidence store (source revisions, passages.jsonl, metadata, catalog, atomic writes, locks)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/store.py",
+   "purpose": "Immutable, hashed local copies of captured sources with provenance, for citation and later reuse.",
+   "evidence_of_value": "Each exam VAFER run ingested 4–16 sources, but no report used them for reader-facing citations. Memory responders, who were barred from the helper, answered from report.md and raw/original files with rg. Controls holding only raw JSON scored 30/30. In astra the follow-up reader found that the canonical copy of source-13 kept only website chrome, while the raw web-5.txt kept the needed statement (work/yalova-astra-2026-10-26/followup-with-vafer/run-log.json). The only positive signal, astra citation support 2 vs 1, was not repeated in v002 (11/12 both arms) or v003 (81/88 vs 74/81).",
+   "recommendation": "simplify",
+   "reason": "Keep an automatic plain-file source cache: one text file per fetched URL plus a small index (URL, title, fetched_at, sha). That serves re-reading and the future Memory module. Drop revisions, immutable history, stale propagation and locks from DeepResearch."
+  },
+  {
+   "component": "Passage refs (s<hex>@<rev>:p000001, [[ref]] tokens)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/store.py",
+   "purpose": "Bind claims to exact stored passages.",
+   "evidence_of_value": "None observed for readers. Refs appeared only in hidden comments or an appendix (R02, R03, R04, R11) or not at all (R09). Mislinked citations still occurred (R02 F1, R04 F3). The refs also leaked arm identity to judges (judge-inputs/T/R03.md, judge-inputs/H/R02.md).",
+   "recommendation": "drop",
+   "reason": "Readers and judges verify URL plus section/quote. Refs added indirection and a verify requirement without improving a single claim."
+  },
+  {
+   "component": "Search index (SQLite FTS5, incremental cache)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/search.py",
+   "purpose": "Phrase- and source-filtered retrieval over stored passages and notes.",
+   "evidence_of_value": "Little use in the exam: R02 ran 1 search; R04 ran 8 searches with limit 1–2 over 5 sources, re-finding text already in context; R09 ran 1; R03 and R11 ran none. Neither memory responders nor astra's follow-up reader used it ('No indexed search rebuild was needed'; rg was used instead).",
+   "recommendation": "drop",
+   "reason": "Corpora of 4–26 sources fit in context or rg. Reconsider only inside the Memory module once cross-session corpora are large."
+  },
+  {
+   "component": "Batch checkpoints with aliases",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/batch.py",
+   "purpose": "Run ingest/read/commit/patch/audit sequences in one CLI call.",
+   "evidence_of_value": "Synthetic CLI time fell from 2,618 to 452 ms (checkpoint-benchmark/results.json), but total helper time per live run was only 0.7–3.1 s. Batch outputs were truncated and re-run (R09), and R11's final batch is what crossed the deadline.",
+   "recommendation": "drop",
+   "reason": "It speeds up a ceremony that should not exist. If any helper survives, it should be one automatic step with tiny output."
+  },
+  {
+   "component": "Coverage map / question records (origin, parent_id, evidence, context_read, answer/answer_note, support, report_anchor, scope_change_reason)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/references/artifact-contracts.md",
+   "purpose": "Make answerable subquestions drive research and track evidence, reading, support and report transfer separately.",
+   "evidence_of_value": "Each run had one boilerplate rationale for all rows, and statuses were unrelated to scores (R09 all open scored 100; R04 complete scored 95). report_anchor forces completion after the report. R11 rows carried 76 and 56 refs. Prompts already listed the questions. In v002, 7 broad 'covered' rows hid gaps. The control's prose evidence plan (notes.md) did the useful part in 2–4 KB.",
+   "recommendation": "simplify",
+   "reason": "Keep a short plan.md with questions, hypotheses, status and the next query, written before searching and updated during it. Drop staged declarations, anchors, parent/child links and scope-change machinery."
+  },
+  {
+   "component": "Audit seal / resolve (source-derived gap candidates)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/store.py",
+   "purpose": "Freeze independent missing-topic candidates before comparing them with the map.",
+   "evidence_of_value": "Self mode in the exam: 23 candidates produced 1 new question. Independent mode in the yalova-v003 dev run: 10 candidates produced 8 new questions and recovered 1096 Kibotos and the Pylai alternatives, but 9 of 16 questions ended blocked by time (work/v003-2026-10-26/yalova-v003/run.json, yalova-audit.md).",
+   "recommendation": "drop",
+   "reason": "The value came from an independent, source-driven examiner, not from hashing. Keep that behaviour as an early gap-finder subagent whose output goes into plan.md; drop the seal and resolve records."
+  },
+  {
+   "component": "Reviews with hash binding (scope, citations, blind_questions)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/store.py",
+   "purpose": "Attest that substantive reviews happened on the exact final report and research state.",
+   "evidence_of_value": "All 15 exam reviews were self-reviews that passed with generic details. R04's post-report review changed nothing while the judge found two deductions. The binding invalidates reviews on any edit, which discourages late fixes.",
+   "recommendation": "drop",
+   "reason": "Replace it with a claim-level verification pass (ideally a fresh-context subagent) that checks every paragraph against its cited capture and produces edits before finalising. This targets the actual deductions (R02 F1, R04 F3, R10 F4)."
+  },
+  {
+   "component": "verify / run finish",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/store.py",
+   "purpose": "Structural integrity checks and the outcome label (complete-within-scope / partial).",
+   "evidence_of_value": "Structural only; runs passed with refs hidden in comments. Outcome labels did not track quality. R11 could not run it before the deadline, and R02's finish caused its 0.1 s overrun.",
+   "recommendation": "drop",
+   "reason": "Optional replacement: a one-command citation lint that checks every paragraph cites something, every cited URL has a capture, and numbers/dates in a claim appear in the cited capture. That would have flagged R05's '27 July' and R11's 'November 1216' gaps cheaply."
+  },
+  {
+   "component": "Capture diagnostics (usable/suspect/empty; host-lines-omitted, truncation-marker, website-chrome-only)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/extract.py",
+   "purpose": "Flag captures that miss the page body.",
+   "evidence_of_value": "The omitted-lines flag is noise on Codex paged opens (R03 10/10, R12 15/16, R11 9/15). The one useful case was a consent-only page flagged in the v0.0.2 local check (tests/evaluation.md section 8). Real access failures (403s, Anubis, timeouts, an 18 MB PDF) were common in both arms.",
+   "recommendation": "simplify",
+   "reason": "Keep detection of empty, blocked, consent-wall and error pages at fetch time. Drop line-window warnings and the recovery actions they generate."
+  },
+  {
+   "component": "PDF/EPUB/HTML extraction (pypdf optional, EPUB spine parsing, zip limits, trafilatura fallback)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/extract.py",
+   "purpose": "Turn local documents into addressable passages.",
+   "evidence_of_value": "No live run ingested a PDF, EPUB or HTML file: every ingest was .txt/.md cut from host web output. PDFs were read through the host web tool (R04 Chapter 4 PDF; R04 web-03 failed at 18,118,107 bytes). The behaviour trial used .txt fixtures. The code is 684 lines and its value is untested.",
+   "recommendation": "simplify",
+   "reason": "Keep a small optional local file-to-text converter for user-supplied books, PDFs or oversized PDFs (the finite-work case), without the provenance apparatus."
+  },
+  {
+   "component": "Planning / next actions (run status, run resume)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/scripts/vafer/planning.py",
+   "purpose": "Derive runnable and blocked actions from records.",
+   "evidence_of_value": "R02 and R04 called status once each. The actions were generic ('Find current evidence for: …') or capture noise, and no run log shows one changing the research.",
+   "recommendation": "drop",
+   "reason": "Fold it into plan.md, which the model reads directly. Resume is better served by the Memory/Plan modules."
+  },
+  {
+   "component": "Skill instructions (SKILL.md + 4 references)",
+   "path": "C:/Users/VECTOR/Documents/GitHub/VAFER/skills/ultra-deep-research/SKILL.md",
+   "purpose": "Workflow guidance.",
+   "evidence_of_value": "About 5,710 words, dominated by record schemas and disclaimers, with one sentence on search technique. VAFER's first web call came about 18 s later than the control's, and its compliance output was boilerplate.",
+   "recommendation": "simplify",
+   "reason": "Rewrite as a short, capability-focused protocol (plan, fan-out, deepen, verify, revise) with a brief honesty section."
+  }
+ ],
+ "eval_design_flaws": [
+  "The prompt enumerates exactly the rubric's coverage items: H/S/T prompts vs C1–C6 in exam-curator/rubric-history.json, rubric-science.json and rubric-technical.json. All 9 reports got coverage 30/30, so a gap-finding method had nothing to find (C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R02/prompt.txt; comparison.md dimension table).",
+  "Ceiling effect: 9/9 reports scored 95–100 and 176/180 item decisions got full credit, with 2.5-point granularity (C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/evaluations/*/scores.json). Acceptance was an absolute threshold (each topic mean ≥90), never a superiority test against the control, and there was no power analysis (exam-curator/protocol.json, quality.acceptance).",
+  "The topics are famous and heavily documented, with canonical sources (Magna Carta Project, WMO 2022 assessment, QUIC RFCs) that are well represented in pretraining. Prior knowledge dominates, so better discovery cannot show.",
+  "The budget was too small for any method to pay off. 720 s had to cover reading the instructions, saving every raw output via apply_patch (17–19 calls), up to 30 clock calls, run-log telemetry and packaging; caps were 16 web calls and no subagents. This disabled VAFER's independent examiner and penalised any process overhead (C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/researcher-instructions.txt).",
+  "The control was contaminated with the treatment: both arms were told to keep raw outputs and notes and to run a source-driven self-audit of missing subquestions, which are VAFER's own core behaviours (researcher-instructions.txt line 14).",
+  "The sample was small and lost data: 3 topics x 2 repeats, with 3 of 12 runs lost to a session interruption (protocol-deviations.md), leaving n=5 vs 4. The science pair ran in different waves (R09 in wave 1, R10 in wave 3), parallel system load was uncontrolled, and no variance or confidence intervals were reported (dispatch-plan.json).",
+  "Judging was thin: one LLM judge per topic, model unknown, no second rater, no human adjudication. The same judges then graded memory with their earlier context still present (protocol-deviations.md).",
+  "Blinding leaked. prepare-judge.py only removed comments starting '<!-- Canonical evidence:', so [[s…@…:p…]] tokens stayed in the judge copies of R02 (2), R03 (14) and R04 (4). Judge T explicitly noticed R03's provenance comment, and judge H noticed R11's methodological aside (C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/prepare-judge.py; evaluations/T/assessment.md).",
+  "The memory test did not test VAFER. Responders were forbidden to read the skill or code, so none used research.py search or read. There were only 3 questions per topic in 240 s, and 11 of 12 answers hit 30/30 (C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/memory-instructions.txt; memory-runs/R02/run-log.json).",
+  "Phase telemetry was self-reported, overlapping and inconsistently formatted: R11 logged only start times, and R04's call_log has no timestamps. Synthesis boundaries mark only the report-writing call (R07 phase_notes), so 'record integration' and 'synthesis' durations cannot be attributed. Token and cost data were absent, and equal call caps do not mean equal work.",
+  "The Yalova experiments were weak: one run per arm, a known development topic, a 12-check key reused and amended from the earlier trial, and a coordinator who knew the labels did the grading (v002 protocol.md). In astra the coordinator triggered a score correction for one arm (yalova-astra comparison.md, 'Değerlendirme düzeltmesi').",
+  "The process undermined the 'development round': the implementation was frozen at 13:10:53, before the dev validation run finished at 13:12:50, and the exam was dispatched at 13:11:45. The failures that run documented (truncation, segmentation, finalisation overrun) went straight into the heldout test (implementation-freeze.json; dispatch-plan.json; yalova-audit.md).",
+  "Only one host was tested: every live run used Codex tools (functions.exec / web__run; gpt-6-astra in astra). Claude Code was never tested (README.md line 114), although the user's goal is both hosts.",
+  "The metrics could not register research capability. Nothing measured recall of hidden key facts the prompt did not mention, discovery of non-obvious or primary sources, multi-hop reasoning, follow-up depth beyond 3 questions, or time and cost to equal quality."
+ ],
+ "implications": [
+  "Rebuild DeepResearch as a capability layer, not a records layer: plan → parallel breadth search with subagents on distinct angles → iterative deepening on gaps and contradictions → chase primary sources → synthesise → independent claim-level verification → revise. Compress the honesty rules into one short section. Today the instructions devote one sentence to search technique.",
+  "Allow no mandatory work after the report unless it can change the report. Reserve a fixed share of the budget (for example 20–25%) for verification and revision. In R02 and R11 post-report bookkeeping caused the overruns, and R04 spent 255 s that changed nothing.",
+  "Replace the store, refs and run.json with the control's working pattern: plan.md for questions and status, notes.md as an evidence map (claim → URL+section+short quote → source caution), and sources/ with automatically saved raw captures. Use grep or rg for retrieval. This held up in all 6 control memory runs (30/30).",
+  "Any script that remains should remove work, not add it. Examples: auto-split saved host web output into per-URL text files; a citation lint (every paragraph cited, every number or date found in the cited capture); compact source-list generation. One command, small output.",
+  "Use subagents where the host offers them, with a sequential fallback: an early independent gap-finder (the only demonstrated VAFER gain, in the yalova-v003 dev run), parallel per-subquestion readers, and a fresh-context citation verifier aimed at the observed deduction types (R02 F1, R04 F3, R10 F4).",
+  "Interoperate with Memory: at the start, check Memory for an existing topic dossier and answer focused follow-ups from it first. At the end, write a compact dossier (key claims with URL+quote, source reliability notes, open questions, date, scope). Memory owns persistence and indexing; DeepResearch should not carry a database.",
+  "Interoperate with Plan: accept a plan (questions, budget, stop rules) and return per-question status, so budget allocation is explicit instead of implied by record stages.",
+  "Treat windowed or paged pages as normal. Drop the omitted-lines warnings and keep only blocked, consent, empty and error detection. Prefer full-text fetch where the host offers it (for example Claude Code WebFetch).",
+  "Redesign the evaluation so a better method can win. Use topics after the training cutoff, niche or multi-hop topics, and contested technical questions. Hide key facts from the prompt and score fact recall plus claim precision. Use blind pairwise preference with at least 2 judges from different model families plus spot human checks. Run at least 8–10 topics x 3 repeats with realistic budgets (for example 30–45 min, 40–80 web calls, subagents allowed for both arms). Record telemetry in the harness, report tokens and cost, strip artifacts for blinding, and include a records-only ablation arm.",
+  "Validate on both hosts. All existing evidence comes from Codex (functions.exec / web__run); Claude Code has never been measured.",
+  "Change the development loop. Fix the failures a dev run exposes before freezing, and measure each change against the bare-model control rather than unit-test counts or integrity invariants."
+ ],
+ "control_arm_strengths": "The control arm worked in five ways.\n- **Plain records:** it kept full raw web JSON plus a 2–4 KB notes.md evidence map: subquestion → key facts, numbers and dates → raw-web-NN pointers. It also listed explicit source cautions.\n  - R05: avoid the NARA page's mistaken 'Innocent II' and September dating; drop Durham's conflicting age.\n  - R08: the UEA introduction compresses the papal chronology; a London Archives snippet conflicts with the Suffix A exemption; an anomalous HAEB page was set aside.\n  - R10: projections are returns to 1980 levels (2066 with a 2049–2077 spread, Arctic 2045, near-global 2040), not closure dates.\n  - Files: C:/Users/VECTOR/Documents/GitHub/VAFER/work/v003-2026-10-26/exam-runs/R05/notes.md, R08/notes.md, R10/notes.md.\n- **Self-audits that changed the draft:** they ran before finalising and produced edits. R07/self-audit.md: missing explanation 'added to draft', 'draft strengthened'. R10/self-audit.md: a table of subquestion → raw file and lines → conclusion; the early-September sensitivity was 'added in the final revision'.\n- **More of the budget on the web:** paired queries plus ops 283 vs 227; raw text 396 KB vs 365 KB; first web call at about 22 s vs about 41 s.\n- **Direct citations:** it cited URL plus section straight in the report.\n- **Enough for memory:** notes.md and raw JSON produced 30/30 retained-memory answers, including for interrupted runs R01 and R06.\n\nVAFER did better in only a few places:\n- **astra:** better sampled citation support (2 vs 1).\n- **v002:** explicit 1999 province vs city casualty scope (Y12 2 vs 1), honest 'partial' outcomes, and visible next and blocked actions.\n- **v0.0.3 dev run, with an independent fresh examiner only:** found previously omitted topics (1096 Kibotos, Pylai alternatives).\n- **v0.0.3 exam:** no matched pair favoured VAFER (two ties and two control wins of 2.5 points). VAFER had no critical errors, but neither did the control.",
+ "instruction_analysis": "The skill instructions total about 5,710 words: SKILL.md has 546 and the four references 5,164 (artifact-contracts.md alone 2,155). Their content is mostly record-keeping and disclaimers:\n- About 88 lines contain prohibitions or negations.\n- About 21 are explicit disclaimers of the 'cannot / does not establish / not certify' kind.\n- Record and CLI terms (run, batch, patch, audit-seal, verify, ingest, read-many, report_anchor, context_read, support) appear on about 80 lines, 42 of them in artifact-contracts.md.\n\nResearch technique gets a single sentence (research-workflow.md line 43: search with variants and follow consequential citations). There is no guidance on:\n- query formulation or iteration;\n- how to split the budget between breadth and depth;\n- which source types to target (primary, official, review);\n- hunting for contradictions;\n- parallel fan-out with subagents;\n- time allocation or stopping rules beyond 'reserve time for synthesis'.\n\nThe SKILL body orders a fixed ceremony: derive questions with origin, seal candidates, keep four stages separate, use batch and patch, finalise before reviews, verify and finish. That loads roughly 7.5k tokens of compliance schemas before the first search. Fitting outcomes appear in the runs: VAFER's first web call came about 18 s later, it ran fewer queries and opens than its paired controls, support rationales were copied as boilerplate, and refs were planted only to pass verify. The instructions optimise for not overclaiming rather than for finding more, or more decisive, evidence."
+}

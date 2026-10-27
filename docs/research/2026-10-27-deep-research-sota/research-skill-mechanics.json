@@ -1,0 +1,916 @@
+{
+ "key": "skill-mechanics",
+ "topic": "Implementing a top-tier deep-research capability as a portable Agent Skill for Claude Code and OpenAI Codex using only host capabilities",
+ "summary": "Current practice from Anthropic's Research system, Claude Code's bundled /deep-research workflow and SkillsBench points the same way. Research quality depends mostly on how much search and reading effort is spent, how well it is split across parallel agents, and whether the claims that matter get checked. Record-keeping does not drive it. A skill measurably helps only where the model lacks a procedure: effort-scaled parallel fan-out with precise briefs, deterministic raw-source archiving for claim-level checks, targeted fresh-context verification of load-bearing claims, and knowledge reuse across sessions. Comprehensive or heavy procedural skills fail measurably: in SkillsBench, comprehensive documentation gained +0.7pp against +19.0pp for compact skills, and heavyweight pipelines caused negative deltas. Anthropic's current model guidance also says that old, prescriptive skills, emphatic wording and explicit verify or double-check steps degrade quality or waste tokens on Opus 5.x and Fable 5. Host facts constrain the design. Claude Code's WebFetch returns a model-written summary (\"lossy by design\") and WebSearch returns only titles and URLs, so raw text needs curl through Bash. Codex web_search is a hosted tool: cached by default, live with --search, pages it opens are not saved, and shell networking is off by default, so raw capture must degrade gracefully. Parallelism can be made portable with plain-language delegation. In Claude Code that is the Agent tool (20 concurrent, depth 3, background by default), with the optional Workflow tool (16 concurrent) only after the user opts in. Codex spawns subagents when a skill instruction asks for it. VAFER v0.0.3's flood of 'partial capture' warnings comes from saving host tool views (windowed or summarized pages) as if they were whole documents. To show a gain, VAFER needs non-saturated tasks (on DRB-II rubrics the best systems score below 50%), paired runs, more than one budget level, and claim-level citation checks against archived text. Claude Code's /deep-research should be a third arm. For Memory, VAFER should own a project-scoped, tiered knowledge store, because host memories are machine-local, off by default in Codex, and not loaded into Claude Code subagents.",
+ "findings": [
+  {
+   "claim": "Anthropic skill-authoring guidance: assume Claude is already smart, add only missing context, keep SKILL.md body under 500 lines, keep references one level deep, and build evaluations before writing extensive documentation.",
+   "date": "accessed 2026-10-27",
+   "detail": "Evaluation-driven development: run Claude without the skill on representative tasks, build 3 scenarios, measure the baseline, then 'Write minimal instructions: Create just enough content to address the gaps and pass evaluations.' Degrees of freedom: high freedom where 'multiple approaches are valid', low freedom only for fragile sequences.",
+   "url": "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "The Agent Skills open spec defines the only frontmatter that is portable across hosts and recommends SKILL.md under 5,000 tokens.",
+   "date": "accessed 2026-10-27",
+   "detail": "Fields: name (required, at most 64 chars, must match the directory), description (required, at most 1024 chars), license, compatibility (at most 500 chars, e.g. network needs), metadata, allowed-tools (experimental). Metadata is about 100 tokens; instructions under 5000 tokens; resources load on demand.",
+   "url": "https://agentskills.io/specification",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "agentskills.io: overly comprehensive skills hurt, and a skill the agent does not need adds no value.",
+   "date": "accessed 2026-10-27",
+   "detail": "'If the agent already handles the entire task well without the skill, the skill may not be adding value.' 'Overly comprehensive skills can hurt more than they help... may pursue unproductive paths triggered by instructions that don't apply.' Recommends gotchas sections, defaults instead of menus, and procedures instead of declarations.",
+   "url": "https://agentskills.io/skill-creation/best-practices",
+   "evidence_type": "expert-opinion",
+   "strength": "moderate"
+  },
+  {
+   "claim": "SkillsBench: curated skills help on average, but comprehensive or exhaustive skills give almost no gain, and heavy pipelines cause negative deltas.",
+   "date": "2026-06-14 (v4)",
+   "detail": "87 tasks, 18 model-harness configurations including Claude Code and Codex CLI: 33.9% to 50.5% (+16.6pp). By SKILL.md length: compact +19.0pp, standard +21.5pp, detailed +14.5pp, comprehensive +0.7pp (only 5 tasks). With 4 or more skills +10.1pp, against +18.0pp for one. 13 of 87 tasks were negative, caused by 'heavyweight pipeline crowds out simpler execution' and 'Skill activation displaces a stronger native strategy'. Gains were 'smaller or negative when models already have strong priors'.",
+   "url": "https://arxiv.org/abs/2602.12670",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Skills that models write for themselves do not reproduce the gain from curated skills.",
+   "date": "2026-06-14",
+   "detail": "Self-generated skills (authored with Anthropic's skill-creator) scored below the no-skill baseline on all 3 dedicated harnesses: -8.1 to -11.5pp (Claude Code + Opus 4.7, Codex + GPT-5.5, Gemini CLI). Curated skills on the same harnesses: +18.2 to +24.8pp.",
+   "url": "https://arxiv.org/abs/2602.12670",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Anthropic distinguishes capability-uplift skills, which become unnecessary as models improve, from encoded-preference skills, and ships blind A/B comparators to test them.",
+   "date": "2026-03-03",
+   "detail": "'If the base model starts passing your evals without the skill loaded... the skill... is just no longer necessary.' Comparator agents judge two versions, or skill against no skill, without knowing which is which. Description tuning 'improved triggering on 5 out of 6 public skills'.",
+   "url": "https://claude.com/blog/improving-skill-creator-test-measure-and-refine-agent-skills",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Emphatic instructions overtrigger on current Claude models.",
+   "date": "accessed 2026-10-27",
+   "detail": "Opus 4.5 and 4.6 'are also more responsive to the system prompt... might now overtrigger. The fix is to soften any aggressive language': replace 'CRITICAL: You MUST use this tool when...' with 'Use this tool when...'. 'If in doubt, use [tool]' causes overtriggering.",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "On Opus 5, explicit verification and re-check instructions cause over-verification without improving quality.",
+   "date": "accessed 2026-10-27",
+   "detail": "'If your prompt contains explicit verification instructions (\"include a final verification step...\", \"use a subagent to verify\"), remove them... removing them reduces wasted tokens with no loss in quality. The same applies to legacy harness scaffolding.' Instructions like 'double-check your answer' 'add cost without improving results'.",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "On Fable 5, skills written for older models are often too prescriptive and degrade output, and fresh-context verifiers beat self-critique.",
+   "date": "accessed 2026-10-27",
+   "detail": "'Skills developed for prior models are often too prescriptive for Claude Fable 5 and can degrade output quality.' 'Separate, fresh-context verifier subagents tend to outperform self-critique.' Memory guidance: 'Store one lesson per file with a one-line summary.' Auditing progress claims against tool results 'nearly eliminated fabricated status reports'.",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Claude Code's best-practices page now lists emphasis, 'keep going' prompts and delegating for a better answer as outdated advice.",
+   "date": "accessed 2026-10-27",
+   "detail": "IMPORTANT or ALL CAPS: 'piling on emphasis mostly makes Claude over-apply the rule'. 'Handing the same task to a subagent doesn't make the answer any better. A fresh reviewer does help.' Subagents give 'parallelism or a fresh pair of eyes... but not a smarter answer'. 'Loop until done' lines 'cause over-work'.",
+   "url": "https://code.claude.com/docs/en/best-practices",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "On Opus 5.5, agent teams given time signals finish research sooner than a single agent, with comparable quality.",
+   "date": "accessed 2026-10-27",
+   "detail": "'In Anthropic's evaluations of small agent teams on research tasks... Teams given a budget kept answer quality comparable to the single agent's while finishing considerably sooner.' Suggested format: append 'elapsed 340s / 1200s'. Caveat from the same page: under time pressure the model 'might search and verify a little less'. Opus 5.5 is also 'much less likely to state an incorrect figure or cite the wrong source'.",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5",
+   "evidence_type": "ab-test",
+   "strength": "weak"
+  },
+  {
+   "claim": "At low effort, Fable 5.1 searches less, and it may copy source text without marking it as a quote.",
+   "date": "accessed 2026-10-27",
+   "detail": "At low effort it is 'more likely to answer from memory'. Fix: tell it to search names 'as the user wrote them'. 'More likely... to reproduce passages of the source text without marking them as quotations'. Fix: one complete worked example.",
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Claude Code WebFetch returns a model-processed answer, not raw page text.",
+   "date": "accessed 2026-10-27 (offset added in v2.1.290, 2026-10-05)",
+   "detail": "'For most fetches, it then runs the prompt against the content in a separate model call, and Claude receives the result of that call rather than the raw page... This makes WebFetch lossy by design... use curl via Bash for the unprocessed page.' Limits: 100,000 chars per call (offset to continue), 15-minute cache, 5-minute deadline, cross-host redirects returned instead of followed.",
+   "url": "https://code.claude.com/docs/en/tools-reference",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Claude Code WebSearch returns only titles and URLs, and subagents share one session-wide search budget.",
+   "date": "accessed 2026-10-27",
+   "detail": "'returns result titles and URLs. It doesn't fetch the result pages.' Up to 8 backend searches per call; allowed_domains or blocked_domains. An interactive session is limited to 200 calls, shared with subagents, refilling about 100 per hour from v2.1.290. In -p mode and the SDK the limit applies per turn.",
+   "url": "https://code.claude.com/docs/en/tools-reference",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Claude Code subagents give portable-style parallelism with isolated context and documented limits.",
+   "date": "accessed 2026-10-27",
+   "detail": "Each subagent has its own context; the parent sees only the final result. Background by default (foreground in -p). Background subagents keep WebFetch, WebSearch, Bash, Read and Write. 20 concurrent by default (CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS); nesting depth 3. Custom agents in .claude/agents or ~/.claude/agents set tools, model, effort, maxTurns, skills and memory. Explore and Plan start without CLAUDE.md.",
+   "url": "https://code.claude.com/docs/en/sub-agents",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Claude Code ships a bundled /deep-research workflow that cross-checks sources and votes on claims. It is a direct competitor to VAFER on Claude Code.",
+   "date": "workflows added v2.1.154 (2026-05-28); /deep-research manual-only from v2.1.218 (2026-07-22)",
+   "detail": "'Fans out web searches on a question across several angles, fetches and cross-checks the sources it finds, votes on each claim, and returns a cited report with claims that didn't survive cross-checking filtered out.' Claims it could not check are listed as unverified. Workflow limits: 16 concurrent agents, 1,000 agents per run, default size guideline under 10 agents. Claude Code only.",
+   "url": "https://code.claude.com/docs/en/workflows",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Claude Code's workflow-authoring reference names specific quality patterns for research and review.",
+   "date": "accessed 2026-10-27",
+   "detail": "Adversarial verify: 3 skeptics prompted to refute, and the claim dies if a majority refute. Also: perspective-diverse verify, judge panel, loop-until-dry ('until K consecutive rounds return nothing new'), multi-modal sweep, completeness critic, and 'No silent caps'. Default to pipeline() over barriers. Read from the bundled /workflow-authoring skill, summarized publicly on the workflows page.",
+   "url": "https://code.claude.com/docs/en/workflows",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Claude Code truncates long skills after compaction and never re-reads them, so the critical guidance must come first.",
+   "date": "accessed 2026-10-27",
+   "detail": "Description plus when_to_use is capped at 1,536 chars in the listing. The skill content enters context once and 'does not re-read the skill file'. After compaction only 'the first 5,000 tokens of each' skill is re-attached (25,000 combined). 'Put the most important instructions near the top of SKILL.md.' Frontmatter fields outside the spec cause hard upload errors on claude.ai and the API.",
+   "url": "https://code.claude.com/docs/en/skills",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Claude Code memory is not a portable research store.",
+   "date": "accessed 2026-10-27",
+   "detail": "AGENTS.md is read only when no CLAUDE.md exists (v2.1.277+). Auto memory loads the first 200 lines or 25KB of MEMORY.md, is machine-local, and is 'not loaded into subagents'. A subagent memory field gives that agent its own directory (user, project or local scope).",
+   "url": "https://code.claude.com/docs/en/memory",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Claude Code has a built-in paired eval harness, and headless bare mode changes skill loading.",
+   "date": "accessed 2026-10-27",
+   "detail": "claude plugin eval runs each case 3 times in isolated sessions with and without the plugin and reports the difference. It warns that LLM-judge verdicts vary more on longer text and recommends regex graders for long outputs. claude -p --bare skips skills, agents, CLAUDE.md and background subagents, so skills must be loaded explicitly (--plugin-dir or --add-dir).",
+   "url": "https://code.claude.com/docs/en/plugin-evals",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Codex loads Agent Skills from .agents/skills paths and has its own budget for the skill list.",
+   "date": "accessed 2026-10-27",
+   "detail": "Paths: $CWD/.agents/skills up to the repo root, $HOME/.agents/skills, /etc/codex/skills. The initial list uses at most 2% of context or 8,000 chars, and descriptions are shortened first, so 'Front-load the key use case and trigger words'. Mention a skill with $skill. Optional agents/openai.yaml (allow_implicit_invocation). Guidance: 'Prefer instructions over scripts unless you need deterministic behavior.'",
+   "url": "https://learn.chatgpt.com/docs/build-skills",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Codex subagents are on by default and spawn when a skill instruction requests delegation, so plain-language fan-out works in both hosts.",
+   "date": "accessed 2026-10-27",
+   "detail": "'Codex can also follow applicable AGENTS.md or skill instructions that request delegation.' Built-in agents: default, worker, explorer. Custom agents are TOML files in ~/.codex/agents or .codex/agents (name, description, developer_instructions, model, model_reasoning_effort) and cannot override sandbox, approvals or MCP. Concurrency is set by agents.max_concurrent_threads_per_session; 'Codex chooses the default'.",
+   "url": "https://learn.chatgpt.com/docs/agent-configuration/subagents",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Codex web search is a hosted tool, uses a cached index by default, and is separate from shell networking.",
+   "date": "accessed 2026-10-27",
+   "detail": "'For local Codex chats, Codex enables cached search by default... an OpenAI-maintained index instead of fetching arbitrary pages live.' Use --search or web_search = \"live\" for current information. Full-access mode defaults to live. 'It does not use the permission profile's network proxy... and it can remain available when command network access is disabled.'",
+   "url": "https://learn.chatgpt.com/docs/web-search",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Codex shell commands have no network by default, so curl-based raw capture needs approval or a config change.",
+   "date": "accessed 2026-10-27",
+   "detail": "'the default workspace-write sandbox mode keeps network access turned off unless you enable it' (sandbox_workspace_write.network_access = true). Network commands ask for approval. codex exec 'runs in a read-only sandbox' by default, and actions needing new approval fail in non-interactive runs.",
+   "url": "https://learn.chatgpt.com/docs/agent-approvals-security",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Codex hooks cannot see hosted web search and are not part of skills, so hook-based source archiving is not portable.",
+   "date": "accessed 2026-10-27",
+   "detail": "Tool coverage table: 'Hosted tools, such as WebSearch: No' for both PreToolUse and PostToolUse. Hooks live in hooks.json, config.toml or plugins. Claude Code, by contrast, lets skill frontmatter register hooks for the session.",
+   "url": "https://learn.chatgpt.com/docs/hooks",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "Codex memories are off by default and can exclude chats that used web search.",
+   "date": "accessed 2026-10-27",
+   "detail": "features.memories is 'off by default'. Memory generation waits for about 6 idle hours (min_rollout_idle_hours). memories.disable_on_external_context keeps chats that used web search out of memory generation. Codex says required rules belong in AGENTS.md (combined cap 32 KiB).",
+   "url": "https://learn.chatgpt.com/docs/customization/memories",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "OpenAI's web_search tool opens and searches pages itself, and exposes actions and source URLs rather than archived page text.",
+   "date": "accessed 2026-10-27",
+   "detail": "Actions are search, open_page and find_in_page (reasoning models). A 'sources' field lists every URL consulted. Codex records searches as web_search items in the transcript and in codex exec --json. A standalone web.run tool with open, find and click (line-numbered views) is in development and off by default.",
+   "url": "https://developers.openai.com/api/docs/guides/tools-web-search",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Anthropic's multi-agent Research system beat a single agent by a large margin, mainly by spending more tokens in parallel.",
+   "date": "2025-06-13",
+   "detail": "Opus 4 lead with Sonnet 4 subagents beat single-agent Opus 4 by 90.2% on an internal research eval. Token usage explained 80% of BrowseComp variance (95% together with tool-call count and model). Multi-agent runs use about 15x the tokens of chat. 3-5 parallel subagents, each making 3+ parallel calls, cut time 'up to 90%'. Early failure: '50 subagents for simple queries'.",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "The Research system's prompts call for specific delegation briefs, effort scaling and a broad-to-narrow search strategy.",
+   "date": "2025-06-13",
+   "detail": "Each subagent needs 'an objective, an output format, guidance on the tools and sources to use, and clear task boundaries'. Scaling: 1 agent with 3-10 calls for facts; 2-4 subagents with 10-15 calls for comparisons; more than 10 subagents for complex research. 'Start with short, broad queries.' Source-quality heuristics were added because agents preferred SEO content farms. A single LLM judge scoring 0.0-1.0 plus pass/fail was the most consistent with humans.",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Anthropic's open-source research prompts set explicit budgets and hand citations to a separate agent.",
+   "date": "2025 (cookbook)",
+   "detail": "Subagent budget: under 5 calls for simple tasks, about 10 for hard ones, up to 15 for very difficult ones; hard cap of 20 calls or 100 sources. Queries 'under 5 words'. Flag speculation, aggregators and marketing. The lead classifies queries as depth-first, breadth-first or straightforward and caps at 20 subagents. The citations agent must leave the text '100% identical' and only add citations. The prompts use ALL-CAPS MUST and ALWAYS, which current Claude guidance discourages.",
+   "url": "https://github.com/anthropics/claude-cookbooks/tree/main/patterns/agents/prompts",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "In the Research architecture, subagents return short distilled summaries.",
+   "date": "2025-09-29",
+   "detail": "'Each subagent might explore extensively, using tens of thousands of tokens or more, but returns only a condensed, distilled summary of its work (often 1,000-2,000 tokens).' Also: 'start by testing a minimal prompt with the best model available... then add clear instructions and examples... based on failure modes'.",
+   "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Every harness component should be justified by what the model cannot do alone; an evaluator is worth its cost only beyond the model's solo ability.",
+   "date": "2026-03-24",
+   "detail": "'every component in a harness encodes an assumption about what the model can't do on its own... worth stress testing'; remove 'one component at a time'. 'The evaluator is... worth the cost when the task sits beyond what the current model does reliably solo.' Agents grade their own work leniently, and an out-of-the-box Claude QA agent would 'talk itself into' approving issues.",
+   "url": "https://www.anthropic.com/engineering/harness-design-long-running-apps",
+   "evidence_type": "anecdote",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Anthropic eval guidance: start with 20-50 real tasks, combine grounding, coverage and source-quality graders for research, and watch for saturation.",
+   "date": "2026-01-09",
+   "detail": "Research evals: 'Groundedness checks... coverage checks... source quality checks.' LLM rubrics need calibration against humans. 'An eval at 100% tracks regressions but provides no signal for improvement.' Use balanced sets (should search and should not search) and multiple trials (pass@k, pass^k).",
+   "url": "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Resource limits change what an agent eval measures.",
+   "date": "2026-02-05",
+   "detail": "Terminal-Bench 2.0: going from strict limits to uncapped added +6pp (p<0.01). 'Tight limits inadvertently reward very efficient strategies, while generous limits... reward agents that can better exploit all available resources.' This bears on VAFER's 720 s and 16-call cap.",
+   "url": "https://www.anthropic.com/engineering/infrastructure-noise",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Open-web research evals are prone to contamination, and multi-agent runs amplify it.",
+   "date": "2026-03-06",
+   "detail": "Opus 4.6 multi-agent BrowseComp: 86.81%, adjusted to 86.57%. 11 of 1,266 answers came from benchmark materials, including 2 runs that decrypted the answer key. Unintended-solution rate: 0.87% multi-agent against 0.24% single-agent (3.7x). 'URL-level blocklists were insufficient.'",
+   "url": "https://www.anthropic.com/engineering/eval-awareness-browsecomp",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "DeepResearch Bench II is far from saturated, so it can show differences that famous-topic rubrics cannot.",
+   "date": "2026-01-13",
+   "detail": "132 tasks across 22 domains with 9,430 binary rubrics derived from expert articles (information recall, analysis, presentation). 'Even the strongest models satisfy fewer than 50% of the rubrics.'",
+   "url": "https://arxiv.org/abs/2601.08536",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Citations from deep-research agents look valid but are often factually wrong, and accuracy falls as retrieval grows.",
+   "date": "2026-05-07",
+   "detail": "Across 14 LLMs: link validity above 94% and relevance above 80%, but factual accuracy only 39-77%. 'Fact Check accuracy drops by approximately 42% on average... as tool calls scale from 2 to 150.' Supporting audit: DeepTRACE (2025-09) measured 40-80% citation accuracy (arXiv 2509.04499).",
+   "url": "https://arxiv.org/abs/2605.06635",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "A community research skill first scored below a bare prompt, then beat it after targeted, benchmark-driven rules.",
+   "date": "2026-07-23",
+   "detail": "DRB-II, 3 tasks. With Opus writers and a Sonnet 5 judge, the original brief scored 33.9% weighted against 48.1% for the baseline (attribution failures). v0.3.4, which adds 'trace each claim to its own primary' and 'rebuild a required list from the items', scored 63.2%. Haiku 4.5 with an Opus 4.8 judge: 64.2% against 56.2%. A flash-lite judge 'marked nearly every rubric satisfied', so it could not separate the arms.",
+   "url": "https://github.com/hec-ovi/research-skill/blob/HEAD/bench/README.md",
+   "evidence_type": "ab-test",
+   "strength": "weak"
+  },
+  {
+   "claim": "Popular community deep-research skills are heavy multi-phase pipelines that publish no baseline comparisons.",
+   "date": "2026-04 to 2026-10",
+   "detail": "Weizhena/Deep-Research-skills (2.4k stars): items x fields outline, one background agent per item writing schema-validated JSON, with a Codex agent TOML. Its install edits ~/.codex/config.toml. 199-biotechnologies (1.2k stars): 8 phases, 10+ sources and 3+ per claim, validators. Socialpranker/deepdive: 13 phases; its own BENCHMARK.md says the project 'ships zero evidence'.",
+   "url": "https://github.com/Weizhena/Deep-Research-skills",
+   "evidence_type": "anecdote",
+   "strength": "weak"
+  },
+  {
+   "claim": "A dual-host plugin shows one research method shipped to both Claude Code and Codex.",
+   "date": "2026-05-23",
+   "detail": "cc-research ships Claude Code and Codex sibling plugins with the same evidence files. 'There is no Task tool as in Claude Code, so the orchestrator skill requests the parallel fan-out in plain language.' It reports Codex agents.max_threads default as 6 (community claim). A Stop-hook citation audit runs, plus an in-band self-audit when hooks are off.",
+   "url": "https://github.com/richer-richard/cc-research",
+   "evidence_type": "documented-design",
+   "strength": "weak"
+  },
+  {
+   "claim": "Overlapping skills in a suite get dropped, and worked examples largely determine which skill wins.",
+   "date": "2026-10-18",
+   "detail": "A skill's rules are followed 93-99% of the time when loaded alone, but only 61-62% when a skill for the same job is also loaded. The worked examples drive this takeover. One merged skill with a single correct worked example restored 96-99%.",
+   "url": "https://arxiv.org/abs/2610.25064",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Processing search results in code rather than in context reduces tokens and slightly improves accuracy.",
+   "date": "2025-11-24",
+   "detail": "Programmatic tool calling: average tokens fell from 43,588 to 27,297 (-37%) on complex research tasks. Internal knowledge retrieval improved from 25.6% to 28.5%; GIA from 46.5% to 51.2%. This is an API feature; the analogue in a skill is scripts that filter archived raw text.",
+   "url": "https://www.anthropic.com/engineering/advanced-tool-use",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak"
+  }
+ ],
+ "techniques": [
+  {
+   "name": "Effort-scaled orchestrator-worker fan-out",
+   "description": "The lead classifies the request and scales effort. Quick: no fan-out, 3-10 searches. Comparison: 2-4 researchers with about 10-15 calls each. Broad or deep: 5-10 researchers with clearly divided sub-questions and an explicit per-researcher budget. The lead plans, delegates, then synthesizes and writes the report itself.",
+   "evidence": "Multi-agent beat single-agent by 90.2% (2025, Opus 4); token usage explained 80% of BrowseComp variance; parallelism cut time up to 90%. Opus 5.5 teams matched single-agent quality but finished sooner. The early failure mode was over-spawning.",
+   "applicability": "Portable as plain-language delegation in SKILL.md: Claude Code uses the Agent tool (20 concurrent, depth 3, background by default); Codex spawns subagents because 'skill instructions request delegation'. Keep within host budgets: the Claude Code session cap of 200 WebSearch calls is shared, so 10 researchers x 15 searches nearly exhausts it.",
+   "cost_or_risk": "Multi-agent runs use about 15x the tokens of chat. Over-spawning on simple queries. Little quality gain on famous or simple topics.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://code.claude.com/docs/en/sub-agents",
+    "https://learn.chatgpt.com/docs/agent-configuration/subagents",
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5"
+   ]
+  },
+  {
+   "name": "Delegation brief plus file-based output contract",
+   "description": "Each researcher gets one objective, the decision it informs, a budget in calls and minutes, source guidance (primary first), boundaries (what other researchers cover), and an output path. It writes findings/<id>.md where each claim carries a URL, a short verbatim quote, a publication or as-of date and a confidence level. It returns a summary under about 300 words plus the file path.",
+   "evidence": "Anthropic found vague briefs produced duplicate work. Subagents return 1-2k-token distilled summaries. Writing artifacts to files avoids a 'game of telephone'. A single correct worked example strongly steers behavior (SkillClash).",
+   "applicability": "Put one worked example of a brief and one of a finding in references/researcher-brief.md and pass it inline in the spawn prompt. No agent definition files are needed, so it works on both hosts without config changes.",
+   "cost_or_risk": "Over-rigid schemas raise failure rates (SkillsBench Pattern C). Keep the contract small.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+    "https://arxiv.org/abs/2610.25064"
+   ]
+  },
+  {
+   "name": "Deterministic raw-source archive with quote checking",
+   "description": "A small script (curl or Python urllib, PDF-to-text when needed) saves the raw bytes plus extracted text and a hash for each source a researcher intends to cite. A second script checks every quoted span against the archived text, exact or normalized, and lists mismatches. Host tools (WebSearch, WebFetch, web_search) are used for discovery and triage only. Host views are never saved as the source of record.",
+   "evidence": "WebFetch is 'lossy by design'; Anthropic's own docs point to 'use curl via Bash for the unprocessed page'. WebSearch returns only titles and URLs. Codex web_search does not persist page text. Cited-but-not-verified studies show 39-77% factual citation accuracy.",
+   "applicability": "Claude Code: Bash curl works, with a permission prompt in Manual mode; the sandbox is off by default and needs allowedDomains when on. Codex: command network is off by default, so request approval interactively. When blocked, record URL plus quote, mark it unarchived, and continue without recovery loops.",
+   "cost_or_risk": "Paywalls and JS-only pages fail. In Codex exec, network approvals fail. Keep it optional and never block synthesis on it.",
+   "urls": [
+    "https://code.claude.com/docs/en/tools-reference",
+    "https://learn.chatgpt.com/docs/agent-approvals-security",
+    "https://arxiv.org/abs/2605.06635"
+   ]
+  },
+  {
+   "name": "Targeted fresh-context adversarial verification",
+   "description": "After the draft, pick only the load-bearing claims: numbers, dates, causal and comparative claims, and anything a recommendation depends on. First run the deterministic quote check. Then send contested claims to 1-3 fresh-context verifiers prompted to refute them against the archived text. Label each claim verified, refuted or unverified (verifier could not check). Skip this on quick tasks.",
+   "evidence": "Claude Code's /deep-research votes per claim and filters refuted ones. The workflow pattern uses 3 skeptics with majority-refute. Fable 5: fresh-context verifiers outperform self-critique. Harness design: an evaluator is worth its cost only beyond the model's solo ability. Opus 5: generic 'verify' instructions waste tokens.",
+   "applicability": "Both hosts can spawn verifier subagents from instructions. On Claude Code with user opt-in, a Workflow script can run pipeline(claims, verify).",
+   "cost_or_risk": "Token cost multiplies per claim. Verifiers are lenient by default. Under time pressure models verify less.",
+   "urls": [
+    "https://code.claude.com/docs/en/workflows",
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5",
+    "https://www.anthropic.com/engineering/harness-design-long-running-apps"
+   ]
+  },
+  {
+   "name": "Completeness critic and loop-until-dry gap rounds",
+   "description": "After the first wave, one critic asks what is missing: which sub-question has no primary source, which counter-view is absent, which list is incomplete. Its gaps become a second, smaller wave. Stop after K rounds that return nothing new, or when the budget is reached. Log what was dropped ('no silent caps').",
+   "evidence": "Documented quality patterns in the Claude Code workflow-authoring reference. Anthropic notes that agents continued after they already had sufficient results, so stop rules matter.",
+   "applicability": "Portable as an instruction. Most useful for breadth-first and enumeration tasks.",
+   "cost_or_risk": "Can loop without end unless bounded by rounds or budget.",
+   "urls": [
+    "https://code.claude.com/docs/en/workflows",
+    "https://www.anthropic.com/engineering/multi-agent-research-system"
+   ]
+  },
+  {
+   "name": "Wide-research table pattern for enumeration tasks",
+   "description": "For 'all X with attributes Y' questions, first enumerate the items, then run one researcher per item (or batch) to fill a fixed field schema, validate the JSON, and aggregate. Rebuild lists from the items themselves instead of copying an aggregator's table.",
+   "evidence": "Anthropic: the single agent failed to list board members of S&P 500 IT companies, while the multi-agent system succeeded. Weizhena's items x fields pattern (2.4k stars). hec-ovi's enumeration rule raised DRB-II recall on one task from 0 of 23 to 23 of 23 (Opus writer).",
+   "applicability": "Portable. A small validate script checks field coverage. Batch items to respect concurrency limits: Codex thread cap, Claude Code 20 concurrent.",
+   "cost_or_risk": "Many agents; per-item errors compound; needs dedup.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://github.com/Weizhena/Deep-Research-skills",
+    "https://github.com/hec-ovi/research-skill/blob/HEAD/bench/README.md"
+   ]
+  },
+  {
+   "name": "Search hygiene heuristics",
+   "description": "Get the current date first. Start with short, broad queries, then narrow. Search unfamiliar or fast-moving names exactly as the user wrote them. Prefer primary sources such as official docs, papers and filings. Flag speculation, aggregators and marketing. Record publication dates and an as-of date for time-sensitive claims. Mark quoted text as quotes.",
+   "evidence": "Anthropic Research prompts and the lessons above. Fable 5.1 answers from memory at low effort and copies source text without quote marks. Agents chose SEO farms until given source-quality heuristics.",
+   "applicability": "A few lines in SKILL.md 'gotchas'. Applies to both hosts. In Codex, tell users to use --search (live) for fresh topics because the default is a cached index.",
+   "cost_or_risk": "Low.",
+   "urls": [
+    "https://github.com/anthropics/claude-cookbooks/tree/main/patterns/agents/prompts",
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1",
+    "https://learn.chatgpt.com/docs/web-search"
+   ]
+  },
+  {
+   "name": "Budget and time signals with stop rules",
+   "description": "Give each researcher a call budget and the run an elapsed/limit signal (e.g. 'elapsed 340s / 1200s'). Reserve a fixed share of wall-clock (for example at least 25%) for synthesis. Stop gathering on diminishing returns.",
+   "evidence": "Opus 5.5: time budgets made teams finish sooner at comparable quality. Cookbook subagent caps: 20 calls or 100 sources. VAFER v0.0.3 spent about 7 minutes on record integration and had an 8-second synthesis.",
+   "applicability": "Portable as prompt text. A tiny script can print elapsed time against the budget.",
+   "cost_or_risk": "Tight budgets reduce verification and search depth.",
+   "urls": [
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5",
+    "https://github.com/anthropics/claude-cookbooks/tree/main/patterns/agents/prompts"
+   ]
+  },
+  {
+   "name": "Project-scoped tiered knowledge base (Memory interop)",
+   "description": "VAFER owns its knowledge store, e.g. .vafer/kb/INDEX.md with one line per topic, plus topic files with a Summary, dated Claims (URL, quote, as-of date) and a Discarded/Superseded section with reasons. Read INDEX before searching and load the summary before the full body. Write or merge at the end. One lesson per file; update instead of duplicating.",
+   "evidence": "Fable 5 memory guidance; hec-ovi's INDEX to summary to full tiers. Host memories are unreliable stores: Claude Code auto memory is machine-local, not loaded into subagents and limited to a 200-line index; Codex memories are off by default and may exclude web-search chats.",
+   "applicability": "Plain files work identically in both hosts and serve the future Memory module. Plan can consume decision-ready summaries and open questions.",
+   "cost_or_risk": "Stale facts unless claims carry as-of dates and are re-checked. Possible conflicts between sessions.",
+   "urls": [
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5",
+    "https://code.claude.com/docs/en/memory",
+    "https://learn.chatgpt.com/docs/customization/memories",
+    "https://github.com/hec-ovi/research-skill"
+   ]
+  },
+  {
+   "name": "Minimal SKILL.md with progressive disclosure and portable frontmatter",
+   "description": "Keep SKILL.md to about 1.5-2.5k tokens with the operational core first: effort scaling, delegation, output contract and stop rules. Host-specific notes and the brief example go in references/ files, each with an explicit when-to-read trigger. Use only spec frontmatter (name, description, compatibility, metadata). Write a front-loaded, third-person description that states when not to use the skill. Use plain wording, not emphatic.",
+   "evidence": "SkillsBench: compact skills +19.0pp against comprehensive +0.7pp. Claude Code keeps only the first 5,000 tokens after compaction. Codex shortens descriptions under its 2% budget. Non-spec fields fail on claude.ai and the API.",
+   "applicability": "Works in Claude Code (~/.claude/skills or a plugin) and Codex (.agents/skills or ~/.agents/skills, optional agents/openai.yaml).",
+   "cost_or_risk": "Too little guidance for small models; test Haiku-class and luna-class models.",
+   "urls": [
+    "https://agentskills.io/specification",
+    "https://code.claude.com/docs/en/skills",
+    "https://learn.chatgpt.com/docs/build-skills",
+    "https://arxiv.org/abs/2602.12670"
+   ]
+  },
+  {
+   "name": "Optional Claude Code Workflow path",
+   "description": "When the user explicitly opts in ('use a workflow' or ultracode), run the same method as a Workflow script: pipeline(sub-questions, research, verify), then a completeness critic and synthesis. Otherwise use the Agent tool. Consider positioning VAFER against /deep-research by doing what that workflow lacks: knowledge-base reuse, decision framing, local corpora and follow-up sessions.",
+   "evidence": "Workflows keep intermediate results out of context, are resumable, and run up to 16 concurrent agents. /deep-research already implements cross-checking.",
+   "applicability": "Claude Code only; requires approval per run in Manual mode. Not portable, so it must remain optional.",
+   "cost_or_risk": "High token use (Large-workflow warning above 25 agents or 1.5M tokens). Workflow agents share the WebSearch cap.",
+   "urls": [
+    "https://code.claude.com/docs/en/workflows",
+    "https://code.claude.com/docs/en/agents"
+   ]
+  },
+  {
+   "name": "Paired, non-saturated evaluation with ablations",
+   "description": "Use 20-50 tasks: a DRB-II subset scored on its rubrics, private breadth or enumeration tasks, post-cutoff topics, contested or decision questions, and local-corpus tasks. Arms: bare model, VAFER, and /deep-research on Claude Code; bare and VAFER on Codex. Run at least 3 trials at 2 budget levels. Record time and tokens. Use a blind, strong judge plus deterministic citation checks against archived text. Ablate one component at a time.",
+   "evidence": "Demystifying evals (20-50 tasks, saturation warning). DRB-II strongest below 50%. Resource limits change what evals measure (+6pp). claude plugin eval (3 runs, no-plugin baseline). A flash-lite judge could not separate arms. BrowseComp contamination.",
+   "applicability": "Claude Code: claude plugin eval or skill-creator evals.json with a comparator. Codex: a codex exec --json harness. The judge runs as a separate session or subagent.",
+   "cost_or_risk": "Expensive; judge variance; contamination of public benchmarks, so keep a private held-out set.",
+   "urls": [
+    "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+    "https://arxiv.org/abs/2601.08536",
+    "https://code.claude.com/docs/en/plugin-evals",
+    "https://www.anthropic.com/engineering/infrastructure-noise"
+   ]
+  }
+ ],
+ "anti_patterns": [
+  {
+   "name": "Record-keeping and integrity ceremony in place of research",
+   "why": "It consumes the fixed budget and the model's attention without adding information. Heavy pipelines crowd out the model's stronger default strategy.",
+   "evidence": "VAFER v0.0.3: 98.5 against 99.4 for the control, over the time cap in 3 of 5 runs, about 7 minutes of record integration, an 8-second synthesis. SkillsBench: comprehensive skills +0.7pp; negative deltas from 'heavyweight pipeline crowds out simpler execution'.",
+   "urls": [
+    "https://arxiv.org/abs/2602.12670"
+   ]
+  },
+  {
+   "name": "Emphatic or over-prescriptive wording and caveat litanies",
+   "why": "Current models follow plain wording. Emphasis makes them over-apply rules, and skills written for older models degrade output.",
+   "evidence": "Claude Code best practices: 'piling on emphasis mostly makes Claude over-apply the rule'. Fable 5: older skills are 'too prescriptive... can degrade output quality'. Opus 4.5/4.6 overtrigger on 'CRITICAL: You MUST'.",
+   "urls": [
+    "https://code.claude.com/docs/en/best-practices",
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5",
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices"
+   ]
+  },
+  {
+   "name": "Generic 'verify or double-check everything' steps",
+   "why": "They compound with the model's built-in self-checking and add cost without improving quality. Verification should target load-bearing claims and use fresh context.",
+   "evidence": "Opus 5 guidance: remove explicit verification instructions, 'no loss in quality'; avoid 'double-check your answer'.",
+   "urls": [
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5"
+   ]
+  },
+  {
+   "name": "Saving host tool views as the source of record",
+   "why": "WebFetch output is a model-written answer to a prompt, and Codex or ChatGPT page views are line windows. Verifying claims against them checks against a summary, and every capture looks partial, which triggers recovery work.",
+   "evidence": "WebFetch is 'lossy by design'. VAFER's extract.py flags 'host-lines-omitted' when a 'Source: open(...) Total lines: N' view shows fewer lines than the page has, which is true for almost any windowed view. Nearly every v0.0.3 capture was flagged partial.",
+   "urls": [
+    "https://code.claude.com/docs/en/tools-reference",
+    "https://developers.openai.com/api/docs/guides/tools-web-search"
+   ]
+  },
+  {
+   "name": "Delegating the same task to a subagent and expecting a better answer",
+   "why": "A subagent is the same or a smaller model. It adds parallelism or a fresh reviewer, not intelligence, and fresh subagents can be slower.",
+   "evidence": "Claude Code best practices table: 'Handing the same task to a subagent doesn't make the answer any better'.",
+   "urls": [
+    "https://code.claude.com/docs/en/best-practices"
+   ]
+  },
+  {
+   "name": "Fan-out on simple queries",
+   "why": "It multiplies cost and time for no quality gain. Opus 5 and Fable 5 already delegate readily.",
+   "evidence": "Anthropic Research early agents spawned '50 subagents for simple queries'. Opus 5 guidance: 'Do not delegate work you can finish yourself in a handful of tool calls'.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5"
+   ]
+  },
+  {
+   "name": "Evaluating on famous topics with a saturating rubric, weak judge or tight caps",
+   "why": "A ceiling hides real differences. Tight caps favor the lean baseline, and weak judges pass everything.",
+   "evidence": "VAFER and control both scored about 98-100 on Magna Carta, ozone and QUIC. 'An eval at 100%... provides no signal'. A flash-lite judge 'marked nearly every rubric satisfied'. Tight limits reward efficient strategies.",
+   "urls": [
+    "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+    "https://github.com/hec-ovi/research-skill/blob/HEAD/bench/README.md",
+    "https://www.anthropic.com/engineering/infrastructure-noise"
+   ]
+  },
+  {
+   "name": "Depending on host memory or host-specific config",
+   "why": "Host memories differ and may be off. Requiring config edits breaks the no-global-config constraint and goes stale as hosts rename features.",
+   "evidence": "Codex memories are off by default and may exclude web-search chats. Claude Code auto memory is not loaded into subagents. Weizhena's install edits ~/.codex/config.toml [features] multi_agent, while current docs use agents.enabled (default true).",
+   "urls": [
+    "https://learn.chatgpt.com/docs/customization/memories",
+    "https://code.claude.com/docs/en/memory",
+    "https://github.com/Weizhena/Deep-Research-skills"
+   ]
+  },
+  {
+   "name": "Long SKILL.md with key rules late, or overlapping skills in a suite",
+   "why": "After compaction only the first 5,000 tokens survive, and overlapping skills for the same job get dropped.",
+   "evidence": "Claude Code re-attaches the first 5,000 tokens per skill. SkillClash: rule-following fell to 61-62% with a second skill for the same job.",
+   "urls": [
+    "https://code.claude.com/docs/en/skills",
+    "https://arxiv.org/abs/2610.25064"
+   ]
+  },
+  {
+   "name": "Instructions to write out reasoning in the response",
+   "why": "Newer Claude models may refuse them under the reasoning_extraction category.",
+   "evidence": "Opus 5, Opus 5.5 and Fable 5 guidance: prompts or skills that ask the model to echo its reasoning 'might be declined with the reasoning_extraction refusal category'.",
+   "urls": [
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5"
+   ]
+  },
+  {
+   "name": "Assuming more retrieval means more accurate citations",
+   "why": "Factual citation accuracy falls as tool calls scale, so long runs need targeted claim checks rather than more fetching.",
+   "evidence": "Fact Check accuracy drops about 42% from 2 to 150 tool calls; factual accuracy is 39-77% while link validity is above 94%.",
+   "urls": [
+    "https://arxiv.org/abs/2605.06635"
+   ]
+  }
+ ],
+ "implications_for_vafer": [
+  "Reposition VAFER as a capability-uplift skill. Remove sealed audits, staged declarations, hash-bound reviews and the passage-ref indirection from the default path. Keep a small helper of about 300 lines: fetch/archive, quote-check, KB index/search/write and an elapsed-time printer. VAFER should win on effort allocation, parallel coverage, raw-source checking and reuse.",
+  "Rewrite SKILL.md at about 1.5-2.5k tokens with the operational core first: effort table, delegation brief, output contract, stop rules, synthesis reserve. Move host notes to references/. Remove the litany of 'does not establish / cannot / not certify' caveats in favor of one plain rule on stating uncertainty.",
+  "Effort tiers: quick (no fan-out, 3-10 searches); standard (3-5 parallel researchers with about 8-12 calls each, then one gap round); deep (6-10 researchers, targeted verification, completeness critic). Keep within host caps: Claude Code's 200-call search cap is shared, 20 concurrent subagents, depth 3; Codex thread limits.",
+  "Make parallelism portable with plain-language delegation ('spawn N researcher subagents in parallel, one per sub-question; wait for all'). Pass the researcher brief inline from references/researcher-brief.md, which works with Claude Code's Agent tool and Codex spawn without agent files. Fall back to sequential inline execution with the same contract when subagents are unavailable or at the depth limit.",
+  "Each researcher writes findings/<id>.md (claim, URL, short quote, date, confidence) and returns a summary under about 300 words plus the path. The lead writes the report itself.",
+  "Source capture: use host tools only for discovery and triage. For sources a researcher intends to cite, run a fetch script (curl or urllib) that archives raw text plus a hash. Never save WebFetch summaries or web.run views as sources. If the network is blocked (Codex default sandbox, non-interactive runs), record URL plus quote marked 'unarchived' and continue, with no recovery loops.",
+  "Verification: one post-draft pass on load-bearing claims only. Run the deterministic quote check first, then 1-3 fresh-context refuters for contested claims. Report verified, refuted and unverified separately. Skip it on quick tasks. Never add generic 'double-check' instructions.",
+  "Reserve at least 25% of wall-clock for synthesis and add an elapsed/limit time signal to briefs. v0.0.3 spent about 7 minutes on integration and 8 seconds on synthesis.",
+  "Memory module: a project-scoped .vafer/kb (INDEX, then topic summary, then full claims with as-of dates and a Discarded section). Read it before searching and merge into it at the end. Do not rely on host auto memory. Plan module interface: a research request carries question, decision informed, budget and deadline; the response carries a decision-ready summary, confidence and open questions.",
+  "Codex: state in 'compatibility' that live search needs `codex --search` or web_search = 'live', and that curl archiving needs network approval. Claude Code: optionally offer a Workflow path when the user opts in. Treat /deep-research as the baseline to beat and differentiate through KB reuse, decision framing, local corpora and follow-ups.",
+  "Use spec-only frontmatter (name, description, license, compatibility, metadata) and a front-loaded, third-person description under 1,024 chars that says when not to use it. Keep suite modules' jobs non-overlapping (SkillClash), and give any shared behavior one correct worked example.",
+  "Rebuild the evaluation. Use 20-50 tasks: a DRB-II subset with its rubrics, breadth or enumeration tasks, post-cutoff (Aug-Oct 2026) topics, contested or decision questions, and local-corpus tasks. Arms: bare, VAFER, /deep-research. At least 3 trials, at two budget levels. Metrics: rubric recall and analysis, claim-level citation accuracy against archived text, unsupported-claim rate, time and tokens. Use a blind strong judge plus deterministic checks, a private held-out set against contamination, and ablate one component at a time.",
+  "Retire any VAFER instruction that does not move the paired score. Expect gains on hard, breadth-heavy and fresh tasks, not on famous topics where the base model is already near the ceiling."
+ ],
+ "open_questions": [
+  "Does parallel fan-out still improve quality, not just speed, on Opus 5.5 and GPT-6.1 for typical user research tasks? Anthropic now reports comparable quality and faster finishes for agent teams. VAFER must measure this itself.",
+  "What is Codex's actual default subagent concurrency? Official docs say 'Codex chooses'; a community repo claims 6. Do spawned agents inherit live web search, or does a custom agent's web_search setting apply?",
+  "Does Codex ignore or reject Claude Code-only SKILL.md fields such as context, agent, hooks and when_to_use? Spec-only frontmatter is the safe choice until tested.",
+  "How does Claude Code's bundled /deep-research perform against a bare session and against VAFER? No public numbers were found.",
+  "Which model does WebFetch use for extraction since v2.1.299 (the caller's model or the small model), and what does that mean for summary fidelity?",
+  "Web tools inside subagents: in this run, a Claude Code workflow subagent had no WebSearch or WebFetch (ToolSearch found none) and only Bash curl worked. DuckDuckGo HTML returned a bot challenge while the arXiv and GitHub APIs worked. VAFER needs a fallback when no search tool exists.",
+  "How much does targeted claim verification improve citation accuracy per token on hard tasks, compared with spending the same tokens on more search?",
+  "How sensitive are DRB-II results to the choice of judge model and to its 'blocked source' rule? Can a private task set be built that is contamination-resistant but still has verifiable rubrics?"
+ ],
+ "sources": [
+  {
+   "url": "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices",
+   "title": "Skill authoring best practices (Anthropic)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices",
+   "title": "Prompting best practices (Claude)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5",
+   "title": "Prompting Claude Opus 5",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5",
+   "title": "Prompting Claude Opus 5.5",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5",
+   "title": "Prompting Claude Fable 5",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1",
+   "title": "Prompting Claude Fable 5.1",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/tools-reference",
+   "title": "Claude Code tools reference (WebFetch, WebSearch, Agent)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/sub-agents",
+   "title": "Claude Code: Create custom subagents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/workflows",
+   "title": "Claude Code: Orchestrate subagents at scale with dynamic workflows",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/agents",
+   "title": "Claude Code: Run agents in parallel",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/skills",
+   "title": "Claude Code: Extend Claude with skills",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/memory",
+   "title": "Claude Code: How Claude remembers your project",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/hooks",
+   "title": "Claude Code hooks reference",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/headless",
+   "title": "Claude Code: Run programmatically (headless, --bare)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/plugin-evals",
+   "title": "Claude Code: Test plugins with evals",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/best-practices",
+   "title": "Best practices for Claude Code",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/costs",
+   "title": "Claude Code: Manage costs",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/sandboxing",
+   "title": "Claude Code sandboxing",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://code.claude.com/docs/en/changelog",
+   "title": "Claude Code changelog (workflows v2.1.154, /deep-research v2.1.218, WebFetch v2.1.290/2.1.299)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "title": "How we built our multi-agent research system (2025-06-13)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills",
+   "title": "Equipping agents for the real world with Agent Skills (2025-10-16)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+   "title": "Effective context engineering for AI agents (2025-09-29)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+   "title": "Demystifying evals for AI agents (2026-01-09)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/eval-awareness-browsecomp",
+   "title": "Eval awareness on BrowseComp (2026-03-06)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/infrastructure-noise",
+   "title": "Infrastructure noise in agentic evals (2026-02-05)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/harness-design-long-running-apps",
+   "title": "Harness design for long-running apps (2026-03-24)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/advanced-tool-use",
+   "title": "Advanced tool use (2025-11-24)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://claude.com/blog/improving-skill-creator-test-measure-and-refine-agent-skills",
+   "title": "Improving skill-creator: test, measure, and refine Agent Skills (2026-03-03)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://agentskills.io/specification",
+   "title": "Agent Skills specification",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://agentskills.io/skill-creation/best-practices",
+   "title": "Agent Skills: Best practices for skill creators",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://agentskills.io/skill-creation/evaluating-skills",
+   "title": "Agent Skills: Evaluating skill output quality",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/build-skills",
+   "title": "Codex/ChatGPT: Build skills",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/agent-configuration/subagents",
+   "title": "Codex/ChatGPT: Subagents",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/web-search",
+   "title": "Codex/ChatGPT: Web search",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/sandboxing",
+   "title": "Codex: Sandbox",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/agent-approvals-security",
+   "title": "Codex: Agent approvals and security",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/non-interactive-mode",
+   "title": "Codex: Non-interactive mode (codex exec)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/hooks",
+   "title": "Codex: Hooks",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/customization/memories",
+   "title": "Codex/ChatGPT: Memories",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md",
+   "title": "Codex: Custom instructions with AGENTS.md",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://learn.chatgpt.com/docs/config-file/config-reference",
+   "title": "Codex configuration reference",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://developers.openai.com/api/docs/guides/tools-web-search",
+   "title": "OpenAI API: Web search tool",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/openai/codex/blob/main/codex-rs/ext/web-search/web_run_description.md",
+   "title": "openai/codex standalone web.run tool description",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.12670",
+   "title": "SkillsBench: Benchmarking How Well Agent Skills Work Across Diverse Tasks",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.31408",
+   "title": "Skill Availability and Presentation Granularity: A Controlled SkillsBench Study",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2610.25064",
+   "title": "One Skill Takes Over: Clashing Agent Skills and a One-File Fix (SkillClash)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2610.32322",
+   "title": "Beyond Gain: Measuring Skill Internalization for Agent Skill Retirement",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2601.08536",
+   "title": "DeepResearch Bench II",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.06635",
+   "title": "Cited but Not Verified: Source Attribution in LLM Deep Research Agents",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.04499",
+   "title": "DeepTRACE: Auditing Deep Research AI Systems",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.06600",
+   "title": "BrowseComp-Plus",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://github.com/anthropics/claude-cookbooks/tree/main/patterns/agents/prompts",
+   "title": "Anthropic cookbook: research lead, subagent and citations prompts",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/Weizhena/Deep-Research-skills",
+   "title": "Weizhena/Deep-Research-skills",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/199-biotechnologies/claude-deep-research-skill",
+   "title": "199-biotechnologies/claude-deep-research-skill",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/Socialpranker/deepdive",
+   "title": "Socialpranker/deepdive",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/hec-ovi/research-skill",
+   "title": "hec-ovi/research-skill (README and bench/README.md)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/richer-richard/cc-research",
+   "title": "richer-richard/cc-research (Claude Code and Codex plugins)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/anthropics/skills",
+   "title": "anthropics/skills (listing, discernment-nudge)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://github.com/anthropics/claude-plugins-official",
+   "title": "anthropics/claude-plugins-official (plugin listing)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://github.com/openai/skills",
+   "title": "openai/skills (curated and system listing)",
+   "read_depth": "abstract-or-snippet"
+  }
+ ]
+}
