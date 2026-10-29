@@ -14,7 +14,7 @@ Search the plan.md headers, which hold the question verbatim and search terms fo
 4. Reuse dead ends: `Not found:` queries and `Blocked:` pages save searches, but retry a dead end older than 90 days or found with a different search mode. A NOT SEARCHED row is not a dead end.
 5. Recompute every derived figure from its refreshed inputs.
 6. Research only what is new or changed, with the normal loop.
-7. Open the reply with "answer unchanged since <date>" or "answer changed: <old> → <new> [n]", and name the run you reused in the method note.
+7. Open the reply with "answer unchanged since <date>" or "answer changed: <old> → <new> [n]", and name the run you reused in evidence.md.
 
 ## Quick follow-ups
 

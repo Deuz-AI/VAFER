@@ -4,9 +4,11 @@
 Usage:
   python scripts/vafer_check.py fetch <run> <url> [<url> ...]
   python scripts/vafer_check.py check <run>
+  python scripts/vafer_check.py diff <old.md> <new.md>
 
 Stdlib only. `check` never touches the network and is advisory (exit 0),
-except when the run folder or report.md is missing (exit 2).
+except when the run folder or report.md is missing (exit 2). `diff` exits 1 when an edit lost or
+changed a number, citation, quote or source entry.
 """
 from __future__ import annotations
 
@@ -33,6 +35,12 @@ HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 SOURCE_TITLES = ("sources", "references", "kaynaklar", "kaynakça", "πηγές", "източници")
 SOURCE_ENTRY = re.compile(r"^\s*(?:[-*]\s*)?\[(\d+)\]:?\s+(.*)$|^\s*(\d+)\.\s+(.*)$")
 CHECK_LINE = re.compile(r"(?P<pre>(?:Source check|Kaynak kontrolü)[*_]*[ \t]*:[*_]*[ \t]*)(?P<val>[^\r\n]*)", re.I)
+MIX_LINE = re.compile(r"(?P<pre>(?:Source mix|Kaynak dağılımı)[*_]*[ \t]*:[*_]*[ \t]*)(?P<val>[^\r\n]*)", re.I)
+LABELS = {"primary": "primary", "official": "official", "scholarly": "scholarly", "press": "press",
+          "secondary": "press", "lead": "lead", "derived": "derived"}
+MIX = ("primary", "official", "scholarly", "press", "lead", "unlabelled")
+LEAD_DOMAINS = ("wikipedia.org", "wikiwand.com", "quora.com", "reddit.com", "medium.com", "blogspot.com",
+                "wordpress.com", "eksisozluk.com", "fandom.com", "news.google.com", "msn.com", "yahoo.com")
 DATE_LINE = re.compile(r"^[\s>*_-]*(?:Tarih|Date|As of|Güncel(?:leme)?|Last updated|Updated|Erişim(?: tarihi)?)"
                        r"[*_]*[ \t]*:", re.I)
 LIST_MARK = re.compile(r"^\s*(?:\d+[.)]|[-*+]|>)\s+")
@@ -366,15 +374,26 @@ def expand_cites(inner: str) -> list:
         out.extend(range(bounds[0], bounds[-1] + 1) if len(bounds) == 2 else bounds)
     return out
 
-def load_receipts(run: Path) -> dict:
-    """Receipt spans from notes/*.md, keyed by normalized URL."""
-    spans = {}
+def receipt_label(line: str) -> tuple:
+    """(label, unverified) from the last parenthesised field; label None when absent."""
+    groups = re.findall(r"\(([^()]*)\)", line)
+    words = re.findall(r"[^\W\d_]+", groups[-1].lower()) if groups else []
+    return next((LABELS[w] for w in words if w in LABELS), None), "unverified" in words
+
+def load_receipts(run: Path) -> tuple:
+    """Receipt spans and (label, unverified) pairs from notes/*.md, both keyed by normalized URL."""
+    spans, labels = {}, {}
     for path in sorted((run / "notes").glob("*.md")):
         for line in read_text(path).splitlines():
             m = RECEIPT.match(line)
             if m:
                 spans.setdefault(norm_url(m.group("url")), []).append(m.group("span"))
-    return spans
+                labels.setdefault(norm_url(m.group("url")), []).append(receipt_label(line[m.end():]))
+    return spans, labels
+
+def lead_domain(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url.strip()).hostname or "").removeprefix("www.")
+    return any(host == d or host.endswith("." + d) for d in LEAD_DOMAINS)
 
 def snapshot_body(text: str) -> str:
     text = text.replace("\r\n", "\n")
@@ -420,7 +439,8 @@ def sentences(body_lines) -> list:
         if line.lstrip().startswith("```"):
             fenced = not fenced
             continue
-        if fenced or HEADING.match(line) or CHECK_LINE.search(line) or DATE_LINE.match(line) or not line.strip():
+        if (fenced or HEADING.match(line) or CHECK_LINE.search(line) or MIX_LINE.search(line)
+                or DATE_LINE.match(line) or not line.strip()):
             continue
         line, parts = LIST_MARK.sub("", line, count=1).strip(), []
         if line.startswith("|"):
@@ -441,12 +461,23 @@ def excerpt(text: str, limit=140) -> str:
 class Checker:
     """Holds evidence for one run and collects flags."""
     def __init__(self, run: Path):
-        self.receipts, self.snaps = load_receipts(run), load_snapshots(run)
+        (self.receipts, self.labels), self.snaps = load_receipts(run), load_snapshots(run)
         self.flags, self._pool = [], {}
         self.figures = self.matched = self.eq_ok = self.eq_bad = 0
     def has_evidence(self, url: str) -> bool:
         key = norm_url(url)
         return key in self.receipts or key in self.snaps
+    def labels_of(self, url: str) -> list:
+        return [lab for lab, _ in self.labels.get(norm_url(url), []) if lab and lab != "derived"]
+    def is_lead(self, url: str) -> bool:
+        labs = self.labels_of(url)
+        return all(lab == "lead" for lab in labs) if labs else lead_domain(url)
+    def source_class(self, url: str) -> str:
+        """Dominant receipt label (ties go to the stronger label); lead-domain or unlabelled without one."""
+        labs = self.labels_of(url)
+        if not labs:
+            return "lead" if lead_domain(url) else "unlabelled"
+        return max(MIX[:5], key=lambda lab: (labs.count(lab), -MIX.index(lab)))
     def texts(self, urls) -> list:
         out = []
         for url in urls:
@@ -537,9 +568,17 @@ def check(run: Path) -> dict:
     body, sources = parse_report(text)
     checker = Checker(run)
     first_seen = {}
-    for sentence in sentences(body):
-        for n in checker.check_sentence(sentence, sources):
-            first_seen.setdefault(n, sentence)
+    h2 = [i for i, line in enumerate(body) if line.startswith("## ")]
+    cut = h2[1] if len(h2) > 1 else len(body)  # first section: text before the second `## ` heading
+    for first, part in ((True, body[:cut]), (False, body[cut:])):
+        for sentence in sentences(part):
+            cited = checker.check_sentence(sentence, sources)
+            for n in cited:
+                first_seen.setdefault(n, sentence)
+            urls = [sources[n] for n in cited if n in sources]
+            if urls and all(checker.is_lead(u) for u in urls):
+                checker.flag("lead-only", sentence, urls, "every cited source is lead-class (wiki, forum, blog, "
+                             "aggregator)" + (" (first section; high severity)" if first else " (medium severity)"))
     for n, sentence in first_seen.items():
         if n not in sources:
             checker.flag("dangling", sentence, [], f"[{n}] has no entry in the sources section")
@@ -559,8 +598,11 @@ def check(run: Path) -> dict:
     count = len(checker.flags)
     summary = (f"script, {evidence} — {checker.matched} of {checker.figures} figures matched, {eqs}, "
                f"{count} flag{'s' if count != 1 else ''} open (check.md)")
+    cited_urls = {norm_url(sources[n]): sources[n] for n in first_seen if n in sources}
+    classes = [checker.source_class(u) for u in cited_urls.values()]
+    mix = ", ".join(f"{classes.count(c)} {c}" for c in MIX)
 
-    rows = ["# Source check", "", summary, "",
+    rows = ["# Source check", "", summary, "", f"Source mix: {mix}", "",
             "| id | kind | report excerpt | cited | expected / found | disposition |",
             "|---|---|---|---|---|---|"]
     old = old_dispositions(run / "check.md")
@@ -572,11 +614,53 @@ def check(run: Path) -> dict:
     rows += ["", "Disposition: fixed / derived / false alarm: <reason> / † (marked unverified, with a footnote).", ""]
     write_text(run / "check.md", "\n".join(rows))
 
-    updated = CHECK_LINE.sub(lambda m: m.group("pre") + summary, text)
-    if updated != text:
-        write_text(report_path, updated)
-    return {"summary": summary, "flags": checker.flags, "figures": checker.figures,
+    for path, with_mix in ((report_path, False), (run / "evidence.md", True)):
+        old_text = read_text(path) if path.exists() else ""
+        updated = CHECK_LINE.sub(lambda m: m.group("pre") + summary, old_text)
+        if with_mix:
+            updated = MIX_LINE.sub(lambda m: m.group("pre") + mix, updated)
+        if updated != old_text:
+            write_text(path, updated)
+    return {"summary": summary, "mix": mix, "flags": checker.flags, "figures": checker.figures,
             "matched": checker.matched, "eq_ok": checker.eq_ok, "eq_bad": checker.eq_bad}
+
+def doc_items(text: str) -> tuple:
+    """Numbers, citation markers and 4+ word quotes of a report body as (keys, label, unit); and its sources."""
+    body, sources = parse_report(text)
+    items = {"numbers": [], "citations": [], "quotes": []}
+    for unit in sentences(body) + [line.strip() for line in body if HEADING.match(line)]:
+        items["numbers"] += [(frozenset(v for v, _ in n.cands), n.text.strip(), unit) for n in numbers(unit)]
+        items["citations"] += [(frozenset([c]), f"[{c}]", unit) for m in CITE.finditer(unit)
+                               for c in expand_cites(m.group(1))]
+        items["quotes"] += [(frozenset([qnorm(q)]), f"“{excerpt(q, 80)}”", unit) for m in QUOTE_RX.finditer(unit)
+                            if len((q := next(g for g in m.groups() if g)).split()) >= 4]
+    return items, sources
+
+def pair(old, new) -> tuple:
+    """Match items sharing a key, same sentence first; return (unmatched old, unmatched new)."""
+    old, new = list(old), list(new)
+    for same in (True, False):
+        for item in list(old):
+            hit = next((x for x in new if x[0] & item[0] and (not same or qnorm(x[2]) == qnorm(item[2]))), None)
+            if hit:
+                old.remove(item)
+                new.remove(hit)
+    return old, new
+
+def diff(old_text: str, new_text: str) -> list:
+    """What an edit lost or changed; an empty list means a pure rephrase."""
+    (old, old_src), (new, new_src) = doc_items(old_text), doc_items(new_text)
+    out = []
+    for kind in old:
+        lost, added = pair(old[kind], new[kind])
+        name = "quote missing or altered" if kind == "quotes" else f"{kind[:-1]} missing"
+        out += [f"{name}: {label} (was in: {excerpt(unit, 120)})" for _, label, unit in lost]
+        out += [f"{kind[:-1]} added: {label} (in: {excerpt(unit, 120)})" for _, label, unit in added]
+    for n in sorted(set(old_src) | set(new_src)):
+        a, b = old_src.get(n), new_src.get(n)
+        if (a and norm_url(a)) != (b and norm_url(b)):
+            out.append(f"source [{n}] changed: {a or '(none)'} -> {b or '(none)'}")
+    return out
 
 def main(argv=None) -> int:
     setup_console()
@@ -587,13 +671,26 @@ def main(argv=None) -> int:
     fetch_p.add_argument("run", type=Path)
     fetch_p.add_argument("urls", nargs="+")
     sub.add_parser("check", help="check <run>/report.md (offline, advisory)").add_argument("run", type=Path)
+    diff_p = sub.add_parser("diff", help="compare an edited report with its previous version")
+    diff_p.add_argument("old", type=Path)
+    diff_p.add_argument("new", type=Path)
     args = parser.parse_args(argv)
     if args.cmd == "fetch":
         return cmd_fetch(args.run, args.urls)
+    if args.cmd == "diff":
+        if not args.old.is_file() or not args.new.is_file():
+            print(f"error: file missing: {args.old if not args.old.is_file() else args.new}", file=sys.stderr)
+            return 2
+        changes = diff(read_text(args.old), read_text(args.new))
+        print("\n".join(changes + [f"diff: {len(changes)} change{'s' if len(changes) != 1 else ''}"
+                                    if changes else "diff: clean (numbers, citations, quotes, sources kept)"]))
+        return 1 if changes else 0
     if not args.run.is_dir() or not (args.run / "report.md").is_file():
         print(f"error: run folder or report.md missing: {args.run}", file=sys.stderr)
         return 2
-    print(check(args.run)["summary"])
+    result = check(args.run)
+    print(result["summary"])
+    print(f"Source mix: {result['mix']}")
     return 0
 
 if __name__ == "__main__":

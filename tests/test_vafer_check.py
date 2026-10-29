@@ -219,6 +219,101 @@ class CheckTests(RunCase):
         self.assertEqual(vc.main(["check", str(self.run / "nope")]), 2)
 
 
+WIKI = "https://tr.wikipedia.org/wiki/Elektrik"
+
+
+class LabelTests(RunCase):
+    def test_receipt_labels_parsed(self):
+        self.note(f'- A — "span one here" {URL1} (opened 2026-10-28; official)\n'
+                  f'- B — "span two here" {URL2} (opened 2026-10-28; secondary)\n'
+                  f'- C — "span three" {WIKI} (opened 2026-10-28; lead; unverified)\n'
+                  f'- D — "span four" https://x.org/a (opened 2026-10-28; derived)\n'
+                  f'- E — "span five" https://x.org/b (opened 2026-10-28)\n')
+        spans, labels = vc.load_receipts(self.run)
+        self.assertEqual(labels[vc.norm_url(URL1)], [("official", False)])
+        self.assertEqual(labels[vc.norm_url(URL2)], [("press", False)])
+        self.assertEqual(labels[vc.norm_url(WIKI)], [("lead", True)])
+        self.assertEqual(labels["x.org/a"], [("derived", False)])
+        self.assertEqual(labels["x.org/b"], [(None, False)])
+        self.assertEqual(spans["x.org/b"], ["span five"])
+
+    def test_lead_only_severity_by_section(self):
+        self.page(URL1, "nothing numeric")
+        self.report("## Summary\n\nElectricity is regulated [2].\n\n## Details\n\nIt is old [2]. "
+                    "It is regulated [1; 2].", sources=((1, URL1), (2, WIKI)))
+        self.check()
+        lead = [f for f in self.result["flags"] if f["kind"] == "lead-only"]
+        self.assertEqual(len(lead), 2)
+        self.assertIn("high severity", lead[0]["detail"])
+        self.assertIn("medium severity", lead[1]["detail"])
+
+    def test_lead_by_receipt_label_and_domain_overridden(self):
+        self.note(f'- A — "rate went up" {URL2} (opened 2026-10-28; lead)\n'
+                  f'- B — "rate went up" {WIKI} (opened 2026-10-28; scholarly)\n')
+        self.report("Rate went up [1]. Rate went up [2].", sources=((1, URL2), (2, WIKI)))
+        self.check()
+        lead = [f for f in self.result["flags"] if f["kind"] == "lead-only"]
+        self.assertEqual([f["urls"] for f in lead], [[URL2]])
+
+    def test_source_mix_and_evidence_md(self):
+        self.note(f'- A — "x y z" {URL1} (opened 2026-10-28; primary)\n'
+                  f'- A2 — "x y z" {URL1} (opened 2026-10-28; press)\n'
+                  f'- B — "x y z" {URL2} (opened 2026-10-28; secondary)\n'
+                  f'- B2 — "x y z" {URL2} (opened 2026-10-28; press unverified)\n')
+        self.report("A [1]. B [2]. C [3]. D [4].",
+                    sources=((1, URL1), (2, URL2), (3, WIKI), (4, "https://x.org/c"), (5, "https://x.org/d")))
+        (self.run / "evidence.md").write_text("# Evidence\n\n**Kaynak kontrolü:** pending\n"
+                                              "Kaynak dağılımı: pending\n", encoding="utf-8")
+        result = self.check()
+        mix = "1 primary, 0 official, 0 scholarly, 1 press, 1 lead, 1 unlabelled"
+        self.assertEqual(result["mix"], mix)
+        self.assertIn(f"Source mix: {mix}", (self.run / "check.md").read_text(encoding="utf-8"))
+        evidence = (self.run / "evidence.md").read_text(encoding="utf-8")
+        self.assertIn(f"**Kaynak kontrolü:** {result['summary']}", evidence)
+        self.assertIn(f"Kaynak dağılımı: {mix}", evidence)
+        self.assertNotIn("pending", evidence)
+
+
+OLD = ('# R\n\n## Özet\n\nKayıt 4.472 oldu [1]. Kurul "tarifeyi değiştirdi ve yeni dönem başladı" dedi [2-3].\n\n'
+       'Source check: x 1 of 2\n\n## Kaynaklar\n\n[1] A. https://a.org/1\n[2] B. https://b.org/2\n'
+       '[3] C. https://c.org/3\n')
+
+
+class DiffTests(unittest.TestCase):
+    def test_rephrase_with_written_numbers_is_clean(self):
+        new = OLD.replace("Kayıt 4.472 oldu [1].", "Toplam kayıt sayısı 4 bin 472 olarak gerçekleşti [1].")
+        new = new.replace("[2-3]", "[2, 3]").replace("x 1 of 2", "y 5 of 9")
+        self.assertEqual(vc.diff(OLD, new), [])
+
+    def test_lost_and_changed_items(self):
+        new = (OLD.replace("4.472", "4.500").replace(" [1].", ".").replace("yeni dönem", "yeni bir dönem")
+               .replace("https://c.org/3", "https://c.org/9"))
+        out = vc.diff(OLD, new)
+        text = "\n".join(out)
+        self.assertIn("number missing: 4.472 (was in: Kayıt 4.472 oldu [1].)", text)
+        self.assertIn("number added: 4.500", text)
+        self.assertIn("citation missing: [1]", text)
+        self.assertIn("quote missing or altered: “tarifeyi değiştirdi ve yeni dönem başladı”", text)
+        self.assertIn("source [3] changed: https://c.org/3 -> https://c.org/9", text)
+
+    def test_cli_exit_codes(self):
+        tmp = Path(tempfile.mkdtemp(prefix="vafer-diff-"))
+        try:
+            (tmp / "old.md").write_text(OLD, encoding="utf-8")
+            (tmp / "same.md").write_text(OLD.replace("oldu", "olarak kaydedildi"), encoding="utf-8")
+            (tmp / "bad.md").write_text(OLD.replace("[2-3]", "[2]"), encoding="utf-8")
+            out = io.StringIO()
+            stdout, sys.stdout = sys.stdout, out
+            try:
+                codes = [vc.main(["diff", str(tmp / "old.md"), str(tmp / n)]) for n in ("same.md", "bad.md", "no.md")]
+            finally:
+                sys.stdout = stdout
+            self.assertEqual(codes, [0, 1, 2])
+            self.assertIn("citation missing: [3]", out.getvalue())
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class FakeResponse(io.BytesIO):
     def __init__(self, body, ctype):
         super().__init__(body)

@@ -2,7 +2,9 @@
 
 VAFER is a suite of agent skills for Claude Code and Codex. Its first module, **vafer-research**, does multi-source web research and saves a run folder that follow-up questions reuse.
 
-Status: **0.2.0-alpha** (2026-10-29). It has not yet been measured against the same model without the skill.
+Status: **v0.0.4** (package 0.3.0-alpha, 2026-10-29). In a first blind test (one question) 0.2 beat the same model without the skill on accuracy and sources but was slower and harder to read; v0.0.4 targets speed and readability.
+
+How a run works in v0.0.4: the lead writes a short plan without searching, launches one researcher per section at once, and each researcher returns a finished section, compact receipts and a list of conflicts. Conflicts are settled by a source ladder (primary record > official text > scholarly work > press > encyclopedias), an editor rewrites the report for plain reading, and a script proves the edit changed no number, date, quote or citation. Method and checks go to `evidence.md`; `report.md` is only for the reader.
 
 ## What it does
 

@@ -4,14 +4,14 @@ Host tools change. When this file and the session disagree, trust the session.
 
 ## Host line
 
-Open the method note with one line: host; search mode; shell, Python and network; subagents; file writes. For example: `Claude Code | WebSearch | shell+python+network | subagents | files`. It tells the reader which checks could run.
+Open evidence.md with one line: host; search mode; shell, Python and network; subagents; file writes. For example: `Claude Code | WebSearch | shell+python+network | subagents | files`. It tells the reader which checks could run.
 
 ## Claude Code
 
 - WebSearch returns titles, URLs and short written summaries. Summaries are leads, not receipts: open the page. An interactive session has 200 searches, shared with subagents.
 - When the skill itself runs inside a subagent, the harness may refuse a new file named report.md; write the draft under another name and rename it.
 - WebFetch returns a small model's answer about the page, not the page. Outside a short list of documentation sites it caps quotes at 125 characters and paraphrases the rest. It reads at most 100,000 characters, decodes every page as UTF-8 (so windows-1254 Turkish pages arrive garbled), splits table rows into cells and cannot read PDFs. Use it to find and skim; take receipts from snapshots.
-- Snapshots: `python scripts/vafer_check.py fetch` through Bash. If a site refuses the download, mark that page's receipts unverified rather than dropping them.
+- Snapshots: `python scripts/vafer_check.py fetch` through Bash, one batch per researcher. If a page fails (refused, empty, boilerplate from a JavaScript-only site, or a .doc file), read it once with WebFetch and mark its receipts unverified rather than dropping them.
 - Spawn fresh `general-purpose` subagents with the Agent tool; several calls in one message run in parallel. If they run in the background, integrate each result as it arrives instead of waiting for all.
 - A user or managed setting can deny WebSearch or WebFetch for every agent. Then there is no web search: reply that the setting blocks research and name it.
 - Headless `claude -p` needs a permission mode that allows the web tools.
