@@ -92,6 +92,14 @@ class SentenceTests(unittest.TestCase):
                 "yy. Sonu, M.Ö. 300 ve s. 45 dahil. Son cümle.")
         self.assertEqual(len(vc.sentences([line])), 3, vc.sentences([line]))
 
+    def test_period_before_digit_never_splits(self):
+        line = "See Cmd. 1478 and No. 7596, s. 45. Ayrıca Prof. Ahmet, Doç. Ali, çev. Veli, vol. 2 geldi. Son."
+        self.assertEqual(len(vc.sentences([line])), 3, vc.sentences([line]))
+
+    def test_footnote_markers_end_sentence(self):
+        line = "First ends here.³ Second ends.¹² Third ends.[^3] Fourth."
+        self.assertEqual(vc.sentences([line]), ["First ends here.³", "Second ends.¹²", "Third ends.[^3]", "Fourth."])
+
 
 class CheckTests(RunCase):
     def test_percent_does_not_match_larger_percent(self):
@@ -169,6 +177,23 @@ class CheckTests(RunCase):
         self.assertIn("**Kaynak kontrolü:** script, page snapshots — 1 of 1 figures matched", text)
         self.assertNotIn("pending", text)
         self.assertIn(result["summary"], (self.run / "check.md").read_text(encoding="utf-8"))
+
+    def test_evidence_md_gets_check_line_and_report_untouched(self):
+        self.page(URL1, "Fiyat 2,61 TL")
+        self.report("Fiyat 2,61 TL [1].\n\nSource check: pending")
+        (self.run / "evidence.md").write_text("Source check: pending\n", encoding="utf-8")
+        before = (self.run / "report.md").read_text(encoding="utf-8")
+        result = self.check()
+        self.assertEqual((self.run / "report.md").read_text(encoding="utf-8"), before)
+        self.assertIn(f"Source check: {result['summary']}", (self.run / "evidence.md").read_text(encoding="utf-8"))
+
+    def test_open_count_excludes_dispositioned_flags(self):
+        self.page(URL1, "Fiyat 2,61 TL")
+        self.report("Fiyat 2,61 TL [1]. Hane sayısı 4.500 oldu.")
+        self.assertTrue(self.check()["summary"].endswith("1 flag, 1 open (check.md)"))
+        path = self.run / "check.md"
+        path.write_text(path.read_text(encoding="utf-8").replace("| disposition: |", "| fixed |"), encoding="utf-8")
+        self.assertTrue(self.check()["summary"].endswith("1 flag, 0 open (check.md)"))
 
     def test_no_summary_line_added(self):
         self.page(URL1, "Fiyat 2,61 TL")
@@ -317,6 +342,19 @@ class DiffTests(unittest.TestCase):
             self.assertIn("citation missing: [3]", out.getvalue())
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_added_citations_and_sources_pass(self):
+        new = OLD.replace("oldu [1].", "oldu [1; 4].") + "[4] D. https://d.org/4\n"
+        out = vc.diff(OLD, new)
+        self.assertEqual([c for c in out if "(ok)" not in c], [], out)
+        self.assertIn("citation added (ok): [4]", "\n".join(out))
+        self.assertIn("source [4] added (ok): https://d.org/4", out)
+
+    def test_citation_detached(self):
+        new = OLD.replace("Kayıt 4.472 oldu [1].", "Kayıt 4.472 oldu. Bu veri resmidir [1].")
+        out = [c for c in vc.diff(OLD, new) if "(ok)" not in c]
+        self.assertEqual(len(out), 1, out)
+        self.assertTrue(out[0].startswith("citation detached: Kayıt 4.472 oldu [1]. -> now: Kayıt 4.472 oldu."), out)
 
 
 class FakeResponse(io.BytesIO):

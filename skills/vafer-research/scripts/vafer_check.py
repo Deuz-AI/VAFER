@@ -8,7 +8,7 @@ Usage:
 
 Stdlib only. `check` never touches the network and is advisory (exit 0),
 except when the run folder or report.md is missing (exit 2). `diff` exits 1 when an edit lost or
-changed a number, citation, quote or source entry.
+changed a number, citation, quote or source entry, or detached a citation; additions alone pass.
 """
 from __future__ import annotations
 
@@ -44,9 +44,10 @@ LEAD_DOMAINS = ("wikipedia.org", "wikiwand.com", "quora.com", "reddit.com", "med
 DATE_LINE = re.compile(r"^[\s>*_-]*(?:Tarih|Date|As of|Güncel(?:leme)?|Last updated|Updated|Erişim(?: tarihi)?)"
                        r"[*_]*[ \t]*:", re.I)
 LIST_MARK = re.compile(r"^\s*(?:\d+[.)]|[-*+]|>)\s+")
-SENT_SPLIT = re.compile(r"(?<=[.!?…])\s+(?=[\[(“\"«„A-ZÇĞİÖŞÜÂÎÛΑ-ΩА-Я0-9])")
+# sentence end: mark plus footnote markers (.³ .[^3]) before space + capital; never a period before a digit
+SENT_END = re.compile(r"[.!?…](?:[⁰¹²³⁴-⁹]+|\[\^\d+\])*(?=\s+[\[(“\"«„A-ZÇĞİÖŞÜÂÎÛΑ-ΩА-Я])|[!?…](?=\s+\d)")
 # a part ending in one of these (Roman numeral, single letter, short abbreviation, M.Ö.) never ends a sentence
-ABBR = re.compile(r"(?:^|[\s(\[\"“'])(?:[IVXLCDM]{1,6}|[^\W\d_]|(?i:dr|prof|doç|yrd|av|op|müh|sn|hz|vb|vs|vd|bkz|yy"
+ABBR = re.compile(r"(?:^|[\s(\[\"“'])(?:[IVXLCDM]{1,6}|[^\W\d_]|(?i:dr|prof|doç|yrd|av|op|müh|sn|hz|vb|vs|vd|bkz|yy|cmd"
                   r"|ss|örn|no|nr|st|mr|mrs|ms|ltd|şti|inc|co|jr|vol|pp|ed|krş|çev|haz))\.$|(?:[^\W\d_]\.){2,}$")
 SPELL = re.compile(r"(?<![\w.,])(?:(?P<n>\d+(?:[.,]\d+)?)\s*|(?P<yuz>yüz)\s+)?"
                    r"(?P<m>bin|thousand|milyon|million|milyar|billion|trilyon|trillion)(?![^\W\d_])"
@@ -64,17 +65,13 @@ Num = namedtuple("Num", "start end text cands")
 def setup_console() -> None:
     """Force UTF-8 on stdout/stderr (Windows consoles default to a legacy code page)."""
     for stream in (sys.stdout, sys.stderr):
-        try:
+        if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, ValueError):
-            pass
 
 def decode_bytes(data: bytes, hints=()) -> tuple:
     """Decode by BOM, then the hinted charsets, then UTF-8, then windows-1254."""
     bom = next((enc for mark, enc in BOMS if data.startswith(mark)), None)
-    for enc in [bom, *hints, "utf-8"]:
-        if not enc:
-            continue
+    for enc in filter(None, [bom, *hints, "utf-8"]):
         try:
             return data.decode(enc).lstrip("\ufeff"), enc
         except (LookupError, UnicodeDecodeError):
@@ -87,8 +84,7 @@ def read_text(path) -> str:
 
 def write_text(path, text: str) -> None:
     """Write UTF-8 without newline translation."""
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write(text)
+    Path(path).write_text(text, encoding="utf-8", newline="")
 
 def squash(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
@@ -193,8 +189,7 @@ def download(url: str):
         req = urllib.request.Request(url, headers={"User-Agent": agent, "Accept": "*/*"})
         try:
             with urlopen(req, timeout=30) as resp:
-                headers = resp.headers
-                return resp.read(), headers.get_content_type(), headers.get_content_charset()
+                return resp.read(), resp.headers.get_content_type(), resp.headers.get_content_charset()
         except urllib.error.HTTPError as exc:
             reason = f"http-{exc.code}"
             exc.close()
@@ -360,8 +355,7 @@ def tr_fold(text: str) -> str:
 
 def quote_status(quote: str, texts) -> str:
     """'exact', 'near' (Turkish-aware case fold) or 'missing'."""
-    parts = [p.strip(" .,;:") for p in re.split(r"\.\.\.|…|\[\.\.\.\]", qnorm(quote))]
-    parts = [p for p in parts if p]
+    parts = [p for p in (q.strip(" .,;:") for q in re.split(r"\.\.\.|…|\[\.\.\.\]", qnorm(quote))) if p]
     hay = [qnorm(t) for t in texts]
     if all(any(p in h for h in hay) for p in parts):
         return "exact"
@@ -388,8 +382,7 @@ def load_receipts(run: Path) -> tuple:
     spans, labels = {}, {}
     for path in sorted((run / "notes").glob("*.md")):
         for line in read_text(path).splitlines():
-            m = RECEIPT.match(line)
-            if m:
+            if m := RECEIPT.match(line):
                 spans.setdefault(norm_url(m.group("url")), []).append(m.group("span"))
                 labels.setdefault(norm_url(m.group("url")), []).append(receipt_label(line[m.end():]))
     return spans, labels
@@ -414,10 +407,7 @@ def load_snapshots(run: Path) -> dict:
             elif len(parts) >= 3 and parts[1] and (pages / parts[1]).exists():
                 snaps[norm_url(parts[0])] = snapshot_body(read_text(pages / parts[1]))
     for path in sorted(pages.glob("*.txt")) if pages.exists() else []:
-        if path.name in failed:
-            continue
-        text = read_text(path)
-        if text.startswith("URL:"):
+        if path.name not in failed and (text := read_text(path)).startswith("URL:"):
             snaps.setdefault(norm_url(text.split("\n", 1)[0][4:].strip()), snapshot_body(text))
     return snaps
 
@@ -449,7 +439,8 @@ def sentences(body_lines) -> list:
         if line.startswith("|"):
             out.append(line)
             continue
-        for part in SENT_SPLIT.split(line):
+        cuts = [0] + [m.end() for m in SENT_END.finditer(line)] + [len(line)]
+        for part in (line[a:b].strip() for a, b in zip(cuts, cuts[1:])):
             if parts and (re.fullmatch(r"(?:\s*\[[^\]]+\]\s*[.,;]?)+", part) or ABBR.search(parts[-1])):
                 parts[-1] += " " + part
             else:
@@ -468,8 +459,7 @@ class Checker:
         self.flags, self._pool = [], {}
         self.figures = self.matched = self.eq_ok = self.eq_bad = 0
     def has_evidence(self, url: str) -> bool:
-        key = norm_url(url)
-        return key in self.receipts or key in self.snaps
+        return norm_url(url) in self.receipts or norm_url(url) in self.snaps
     def labels_of(self, url: str) -> list:
         return [lab for lab, _ in self.labels.get(norm_url(url), []) if lab and lab != "derived"]
     def is_lead(self, url: str) -> bool:
@@ -482,11 +472,8 @@ class Checker:
             return "lead" if lead_domain(url) else "unlabelled"
         return max(MIX[:5], key=lambda lab: (labs.count(lab), -MIX.index(lab)))
     def texts(self, urls) -> list:
-        out = []
-        for url in urls:
-            key = norm_url(url)
-            out += self.receipts.get(key, []) + ([self.snaps[key]] if key in self.snaps else [])
-        return out
+        return [t for key in map(norm_url, urls)
+                for t in self.receipts.get(key, []) + ([self.snaps[key]] if key in self.snaps else [])]
     def pool(self, url: str) -> list:
         key = norm_url(url)
         if key not in self._pool:
@@ -590,17 +577,18 @@ def check(run: Path) -> dict:
             checker.flag("unused", f"[{n}] {url}", [url], "source entry is never cited in the body")
         if not checker.has_evidence(url):
             checker.flag("unverifiable", f"[{n}] {url}", [url], "no page snapshot and no receipt for this URL")
-    for line in body:
-        if not CHECK_LINE.search(line):
-            for m in LEAK.finditer(line):
-                checker.flag("label-leak", line, [], f"internal label `{m.group(0)}` in report body")
+    for line in (line for line in body if not CHECK_LINE.search(line)):
+        for m in LEAK.finditer(line):
+            checker.flag("label-leak", line, [], f"internal label `{m.group(0)}` in report body")
 
     evidence = "page snapshots" if checker.snaps else "note receipts"
     eqs = (f"{checker.eq_ok} equation{'s' if checker.eq_ok != 1 else ''} correct"
            + (f", {checker.eq_bad} wrong" if checker.eq_bad else ""))
+    old = old_dispositions(run / "check.md")  # holds filled-in dispositions only
+    disps = [(old.get((f["kind"], f["excerpt"])) or ["disposition:"]).pop(0) for f in checker.flags]
     count = len(checker.flags)
     summary = (f"script, {evidence} — {checker.matched} of {checker.figures} figures matched, {eqs}, "
-               f"{count} flag{'s' if count != 1 else ''} open (check.md)")
+               f"{count} flag{'s' if count != 1 else ''}, {disps.count('disposition:')} open (check.md)")
     cited_urls = {norm_url(sources[n]): sources[n] for n in first_seen if n in sources}
     classes = [checker.source_class(u) for u in cited_urls.values()]
     mix = ", ".join(f"{classes.count(c)} {c}" for c in MIX)
@@ -608,36 +596,45 @@ def check(run: Path) -> dict:
     rows = ["# Source check", "", summary, "", f"Source mix: {mix}", "",
             "| id | kind | report excerpt | cited | expected / found | disposition |",
             "|---|---|---|---|---|---|"]
-    old = old_dispositions(run / "check.md")
-    for i, f in enumerate(checker.flags, 1):
+    for i, (f, disp) in enumerate(zip(checker.flags, disps), 1):
         urls = ", ".join(f["urls"]) or "—"
-        kept = old.get((f["kind"], f["excerpt"]))
-        disp = kept.pop(0) if kept else "disposition:"
         rows.append(f"| F{i} | {f['kind']} | {f['excerpt']} | {urls} | {excerpt(f['detail'], 200)} | {disp} |")
     rows += ["", "Disposition: fixed / derived / false alarm: <reason> / † (marked unverified, with a footnote).", ""]
     write_text(run / "check.md", "\n".join(rows))
 
-    for path, with_mix in ((report_path, False), (run / "evidence.md", True)):
-        old_text = read_text(path) if path.exists() else ""
-        updated = CHECK_LINE.sub(lambda m: m.group("pre") + summary, old_text)
-        if with_mix:
-            updated = MIX_LINE.sub(lambda m: m.group("pre") + mix, updated)
-        if updated != old_text:
-            write_text(path, updated)
+    path = run / "evidence.md" if (run / "evidence.md").exists() else report_path  # never both
+    old_text = read_text(path)
+    updated = CHECK_LINE.sub(lambda m: m.group("pre") + summary, old_text)
+    if path != report_path:
+        updated = MIX_LINE.sub(lambda m: m.group("pre") + mix, updated)
+    if updated != old_text:
+        write_text(path, updated)
     return {"summary": summary, "mix": mix, "flags": checker.flags, "figures": checker.figures,
             "matched": checker.matched, "eq_ok": checker.eq_ok, "eq_bad": checker.eq_bad}
 
 def doc_items(text: str) -> tuple:
-    """Numbers, citation markers and 4+ word quotes of a report body as (keys, label, unit); and its sources."""
+    """Numbers, citation markers and 4+ word quotes of a report body as (keys, label, unit); sources; sentences."""
     body, sources = parse_report(text)
-    items = {"numbers": [], "citations": [], "quotes": []}
-    for unit in sentences(body) + [line.strip() for line in body if HEADING.match(line)]:
+    items, sents = {"numbers": [], "citations": [], "quotes": []}, sentences(body)
+    for unit in sents + [line.strip() for line in body if HEADING.match(line)]:
         items["numbers"] += [(frozenset(v for v, _ in n.cands), n.text.strip(), unit) for n in numbers(unit)]
         items["citations"] += [(frozenset([c]), f"[{c}]", unit) for m in CITE.finditer(unit)
                                for c in expand_cites(m.group(1))]
         items["quotes"] += [(frozenset([qnorm(q)]), f"“{excerpt(q, 80)}”", unit) for m in QUOTE_RX.finditer(unit)
                             if len((q := next(g for g in m.groups() if g)).split()) >= 4]
-    return items, sources
+    return items, sources, sents
+
+def detached(old_sents, new_sents) -> list:
+    """Old cited sentences whose closest new sentence (shared numbers, then shared words) has no citation."""
+    def feats(s):
+        return ({v for n in numbers(s) for v, _ in n.cands}, set(re.findall(r"[^\W\d_]{3,}", tr_fold(mask(s)))), s)
+    new, out = [feats(s) for s in new_sents], []
+    for vals, words, s in (feats(s) for s in old_sents if CITE.search(s)):
+        score = lambda n: (len(vals & n[0]), sum(map(len, words & n[1])))
+        best = max(new, key=score, default=None)
+        if best and any(score(best)) and not CITE.search(best[2]):
+            out.append(f"citation detached: {excerpt(s, 120)} -> now: {excerpt(best[2], 120)}")
+    return out
 
 def pair(old, new) -> tuple:
     """Match items sharing a key, same sentence first; return (unmatched old, unmatched new)."""
@@ -651,19 +648,22 @@ def pair(old, new) -> tuple:
     return old, new
 
 def diff(old_text: str, new_text: str) -> list:
-    """What an edit lost or changed; an empty list means a pure rephrase."""
-    (old, old_src), (new, new_src) = doc_items(old_text), doc_items(new_text)
+    """What an edit lost, changed or added; added citations and sources carry "(ok)". An empty list means a pure rephrase."""
+    (old, old_src, old_sents), (new, new_src, new_sents) = doc_items(old_text), doc_items(new_text)
     out = []
     for kind in old:
         lost, added = pair(old[kind], new[kind])
         name = "quote missing or altered" if kind == "quotes" else f"{kind[:-1]} missing"
         out += [f"{name}: {label} (was in: {excerpt(unit, 120)})" for _, label, unit in lost]
-        out += [f"{kind[:-1]} added: {label} (in: {excerpt(unit, 120)})" for _, label, unit in added]
+        ok = " (ok)" if kind not in ("numbers", "quotes") else ""  # an edit may add citations, never facts
+        out += [f"{kind[:-1]} added{ok}: {label} (in: {excerpt(unit, 120)})" for _, label, unit in added]
     for n in sorted(set(old_src) | set(new_src)):
         a, b = old_src.get(n), new_src.get(n)
-        if (a and norm_url(a)) != (b and norm_url(b)):
-            out.append(f"source [{n}] changed: {a or '(none)'} -> {b or '(none)'}")
-    return out
+        if not a:
+            out.append(f"source [{n}] added (ok): {b}")
+        elif norm_url(a) != (b and norm_url(b)):
+            out.append(f"source [{n}] changed: {a} -> {b or '(none)'}")
+    return out + detached(old_sents, new_sents)
 
 def main(argv=None) -> int:
     setup_console()
@@ -685,15 +685,15 @@ def main(argv=None) -> int:
             print(f"error: file missing: {args.old if not args.old.is_file() else args.new}", file=sys.stderr)
             return 2
         changes = diff(read_text(args.old), read_text(args.new))
-        print("\n".join(changes + [f"diff: {len(changes)} change{'s' if len(changes) != 1 else ''}"
-                                    if changes else "diff: clean (numbers, citations, quotes, sources kept)"]))
-        return 1 if changes else 0
+        bad = sum("(ok)" not in c for c in changes)  # additions alone pass
+        print("\n".join(changes + [f"diff: {bad} problem{'s' if bad != 1 else ''}"
+                                    if bad else "diff: clean (numbers, citations, quotes, sources kept)"]))
+        return 1 if bad else 0
     if not args.run.is_dir() or not (args.run / "report.md").is_file():
         print(f"error: run folder or report.md missing: {args.run}", file=sys.stderr)
         return 2
     result = check(args.run)
-    print(result["summary"])
-    print(f"Source mix: {result['mix']}")
+    print(f"{result['summary']}\nSource mix: {result['mix']}")
     return 0
 
 if __name__ == "__main__":
