@@ -32,10 +32,19 @@ RECEIPT = re.compile(r'^\s*[-*+]\s+(?P<fact>.*?)["“„](?P<span>[^"“”\n]+)
 HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 SOURCE_TITLES = ("sources", "references", "kaynaklar", "kaynakça", "πηγές", "източници")
 SOURCE_ENTRY = re.compile(r"^\s*(?:[-*]\s*)?\[(\d+)\]:?\s+(.*)$|^\s*(\d+)\.\s+(.*)$")
-CHECK_LINE = re.compile(r"^(?P<pre>[\s>*_-]*(?:Source check|Kaynak kontrolü)[*_]*\s*:[*_]*[ \t]*)(?P<val>[^\r\n]*)",
-                        re.M | re.I)
+CHECK_LINE = re.compile(r"(?P<pre>(?:Source check|Kaynak kontrolü)[*_]*[ \t]*:[*_]*[ \t]*)(?P<val>[^\r\n]*)", re.I)
+DATE_LINE = re.compile(r"^[\s>*_-]*(?:Tarih|Date|As of|Güncel(?:leme)?|Last updated|Updated|Erişim(?: tarihi)?)"
+                       r"[*_]*[ \t]*:", re.I)
 LIST_MARK = re.compile(r"^\s*(?:\d+[.)]|[-*+]|>)\s+")
 SENT_SPLIT = re.compile(r"(?<=[.!?…])\s+(?=[\[(“\"«„A-ZÇĞİÖŞÜÂÎÛΑ-ΩА-Я0-9])")
+# a part ending in one of these (Roman numeral, single letter, short abbreviation, M.Ö.) never ends a sentence
+ABBR = re.compile(r"(?:^|[\s(\[\"“'])(?:[IVXLCDM]{1,6}|[^\W\d_]|(?i:dr|prof|doç|yrd|av|op|müh|sn|hz|vb|vs|vd|bkz|yy"
+                  r"|ss|örn|no|nr|st|mr|mrs|ms|ltd|şti|inc|co|jr|vol|pp|ed|krş|çev|haz))\.$|(?:[^\W\d_]\.){2,}$")
+SPELL = re.compile(r"(?<![\w.,])(?:(?P<n>\d+(?:[.,]\d+)?)\s*|(?P<yuz>yüz)\s+)?"
+                   r"(?P<m>bin|thousand|milyon|million|milyar|billion|trilyon|trillion)(?![^\W\d_])"
+                   r"(?:(?<=bin|and)\s+(?P<tail>\d{1,3})(?!\d|[.,]\d))?", re.I)
+SCALE = {"bin": 3, "thousand": 3, "milyon": 6, "million": 6, "milyar": 9, "billion": 9, "trilyon": 12, "trillion": 12}
+OLE_MAGIC = b"\xd0\xcf\x11\xe0"
 LEAK = re.compile(r"\[GAP\]|\[prior\]|\bCOVERED\b|\bPARTIAL\b|\bNOT-FOUND\b|\bNOT SEARCHED\b"
                   r"|(?i:\bresearcher\b|\bgap wave\b|\bwave 1\b)")
 QMAP = str.maketrans({"“": '"', "”": '"', "„": '"', "«": '"', "»": '"', "‘": "'", "’": "'", "‚": "'",
@@ -53,9 +62,9 @@ def setup_console() -> None:
             pass
 
 def decode_bytes(data: bytes, hints=()) -> tuple:
-    """Decode with the hinted charsets, then BOM, then UTF-8, then windows-1254."""
+    """Decode by BOM, then the hinted charsets, then UTF-8, then windows-1254."""
     bom = next((enc for mark, enc in BOMS if data.startswith(mark)), None)
-    for enc in [*hints, bom, "utf-8"]:
+    for enc in [bom, *hints, "utf-8"]:
         if not enc:
             continue
         try:
@@ -194,6 +203,8 @@ def fetch_one(url: str, pages: Path):
         raw, ctype, header_cs = download(url)
     except RuntimeError as exc:
         return str(exc), "", 0
+    if raw.startswith(OLE_MAGIC) or ctype == "application/msword":
+        return "doc-binary", "", 0
     if ctype == "application/pdf" or raw.lstrip()[:4] == b"%PDF":
         text, charset = pdf_text(raw), "pdf"
         if text is None:
@@ -207,7 +218,12 @@ def fetch_one(url: str, pages: Path):
     name = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12] + ".txt"
     stamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     head = f"URL: {url}\nFetched: {stamp}\nCharset: {charset}\nSHA256: {hashlib.sha256(raw).hexdigest()}\n\n"
-    write_text(pages / name, head + text.replace("\r\n", "\n"))
+    body = text.replace("\r\n", "\n")
+    write_text(pages / name, head + body)
+    if len(body.strip()) < 200:
+        return "empty", name, len(text)
+    if sum(len(line.strip()) >= 80 for line in body.splitlines()) < 3:
+        return "boilerplate", name, len(text)  # mostly menus and link lists
     return "ok", name, len(text)
 
 def cmd_fetch(run: Path, urls) -> int:
@@ -219,7 +235,8 @@ def cmd_fetch(run: Path, urls) -> int:
     for url in urls:
         status, name, chars = fetch_one(url, pages)
         rows[url] = [url, name, status, dt.date.today().isoformat()]
-        print(f"ok {name} {chars}" if status == "ok" else f"failed {status}")
+        saved = f" (saved {name}, {chars} chars)" if name else ""
+        print(f"ok {name} {chars}" if status == "ok" else f"failed {status}{saved}")
     write_text(index, "".join("\t".join(r) + "\n" for r in rows.values()))
     return 0
 
@@ -250,10 +267,21 @@ def mask(text: str) -> str:
         text = rx.sub(lambda m: " " * len(m.group(0)), text)
     return text
 
+def spelled(m) -> list:
+    """Readings of a written-out number: `4 bin 472`, `bin 550`, `12,3 milyon`, `1.2 million`, `yüz bin`."""
+    exp, tail = SCALE[m.group("m").lower()], int(m.group("tail") or 0)
+    base = parse_number(m.group("n")) if m.group("n") else [(Decimal(100 if m.group("yuz") else 1), 0)]
+    return [(v.scaleb(exp) + tail, d - exp if d and not tail else 0) for v, d in base]
+
 def numbers(text: str, masked=False) -> list:
-    """All number tokens in text (citations and URLs excluded)."""
-    return [Num(m.start(), m.end(), m.group(0), parse_number(m.group("n"), bool(m.group("neg"))))
-            for m in NUM.finditer(text if masked else mask(text))]
+    """All number tokens in text (citations and URLs excluded), written-out scales included."""
+    text = text if masked else mask(text)
+    out = [Num(m.start(), m.end(), m.group(0), spelled(m)) for m in SPELL.finditer(text)
+           if m.group("n") or m.group("yuz") or m.group("tail")]
+    spans = [(n.start, n.end) for n in out]
+    out += [Num(m.start(), m.end(), m.group(0), parse_number(m.group("n"), bool(m.group("neg"))))
+            for m in NUM.finditer(text) if not any(s <= m.start() < e for s, e in spans)]
+    return sorted(out, key=lambda n: n.start)
 
 def rounds_to(src: Decimal, value: Decimal, places: int) -> bool:
     return src == value or src.quantize(Decimal(1).scaleb(-places), ROUND_HALF_UP) == value
@@ -354,14 +382,18 @@ def snapshot_body(text: str) -> str:
 
 def load_snapshots(run: Path) -> dict:
     """Snapshot texts keyed by normalized URL, via index.tsv, then file headers."""
-    pages, snaps = run / "pages", {}
+    pages, snaps, failed = run / "pages", {}, set()
     index = pages / "index.tsv"
     if index.exists():
         for line in read_text(index).splitlines():
             parts = line.split("\t")
-            if len(parts) >= 3 and parts[2] == "ok" and parts[1] and (pages / parts[1]).exists():
+            if len(parts) >= 3 and parts[1] and parts[2] != "ok":
+                failed.add(parts[1])  # saved for inspection only (empty / boilerplate)
+            elif len(parts) >= 3 and parts[1] and (pages / parts[1]).exists():
                 snaps[norm_url(parts[0])] = snapshot_body(read_text(pages / parts[1]))
     for path in sorted(pages.glob("*.txt")) if pages.exists() else []:
+        if path.name in failed:
+            continue
         text = read_text(path)
         if text.startswith("URL:"):
             snaps.setdefault(norm_url(text.split("\n", 1)[0][4:].strip()), snapshot_body(text))
@@ -382,17 +414,20 @@ def parse_report(text: str):
     return (lines[:cut] if cut is not None else lines), sources
 
 def sentences(body_lines) -> list:
-    """Split body prose into sentences, skipping headings, fences and the Source check line."""
+    """Split body prose into sentences; table rows stay whole; skip headings, fences, check and date lines."""
     out, fenced = [], False
     for line in body_lines:
         if line.lstrip().startswith("```"):
             fenced = not fenced
             continue
-        if fenced or HEADING.match(line) or CHECK_LINE.match(line) or not line.strip():
+        if fenced or HEADING.match(line) or CHECK_LINE.search(line) or DATE_LINE.match(line) or not line.strip():
             continue
-        parts = []
-        for part in SENT_SPLIT.split(LIST_MARK.sub("", line, count=1).strip()):
-            if parts and re.fullmatch(r"(?:\s*\[[^\]]+\]\s*[.,;]?)+", part):
+        line, parts = LIST_MARK.sub("", line, count=1).strip(), []
+        if line.startswith("|"):
+            out.append(line)
+            continue
+        for part in SENT_SPLIT.split(line):
+            if parts and (re.fullmatch(r"(?:\s*\[[^\]]+\]\s*[.,;]?)+", part) or ABBR.search(parts[-1])):
                 parts[-1] += " " + part
             else:
                 parts.append(part)
@@ -443,6 +478,7 @@ class Checker:
         urls = [sources[n] for n in cited if n in sources]
         nums = numbers(masked, masked=True)
         used = set()
+        uncited, low = ("uncited-table", " (table row; low severity)") if sentence.startswith("|") else ("uncited", "")
         for chain, ops, result, eq_pos in find_equations(masked, nums):
             used.update(n.start for n in chain + [result])
             ok, got = equation_ok(chain, ops, result)
@@ -463,7 +499,7 @@ class Checker:
                 elif urls:
                     self.check_number(num, urls, sentence)
                 elif not cited:
-                    self.flag("uncited", sentence, [], f"equation input {num.text.strip()} has no citation")
+                    self.flag(uncited, sentence, [], f"equation input {num.text.strip()} has no citation{low}")
         rest = [n for n in nums if n.start not in used]
         if cited:
             for num in rest:
@@ -480,8 +516,19 @@ class Checker:
         else:
             loose = [n.text.strip() for n in rest if not is_year(n) and not is_small_int(n)]
             if loose:
-                self.flag("uncited", sentence, [], "numbers without citation: " + ", ".join(loose))
+                self.flag(uncited, sentence, [], "numbers without citation: " + ", ".join(loose) + low)
         return cited
+
+def old_dispositions(path: Path) -> dict:
+    """Filled-in dispositions of a previous check.md, keyed by (kind, report excerpt), in row order."""
+    old = {}
+    for line in read_text(path).splitlines() if path.exists() else []:
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+        if len(cells) >= 6 and re.fullmatch(r"F\d+", cells[0]):
+            disp = " | ".join(cells[5:]).strip()
+            if disp.removeprefix("disposition:").strip():
+                old.setdefault((cells[1], cells[2]), []).append(disp)
+    return old
 
 def check(run: Path) -> dict:
     """Run every check; write check.md and update the Source check line."""
@@ -502,7 +549,7 @@ def check(run: Path) -> dict:
         if not checker.has_evidence(url):
             checker.flag("unverifiable", f"[{n}] {url}", [url], "no page snapshot and no receipt for this URL")
     for line in body:
-        if not CHECK_LINE.match(line):
+        if not CHECK_LINE.search(line):
             for m in LEAK.finditer(line):
                 checker.flag("label-leak", line, [], f"internal label `{m.group(0)}` in report body")
 
@@ -516,9 +563,12 @@ def check(run: Path) -> dict:
     rows = ["# Source check", "", summary, "",
             "| id | kind | report excerpt | cited | expected / found | disposition |",
             "|---|---|---|---|---|---|"]
+    old = old_dispositions(run / "check.md")
     for i, f in enumerate(checker.flags, 1):
         urls = ", ".join(f["urls"]) or "—"
-        rows.append(f"| F{i} | {f['kind']} | {f['excerpt']} | {urls} | {excerpt(f['detail'], 200)} | disposition: |")
+        kept = old.get((f["kind"], f["excerpt"]))
+        disp = kept.pop(0) if kept else "disposition:"
+        rows.append(f"| F{i} | {f['kind']} | {f['excerpt']} | {urls} | {excerpt(f['detail'], 200)} | {disp} |")
     rows += ["", "Disposition: fixed / derived / false alarm: <reason> / † (marked unverified, with a footnote).", ""]
     write_text(run / "check.md", "\n".join(rows))
 
