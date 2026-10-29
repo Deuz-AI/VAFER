@@ -2,7 +2,7 @@
 
 VAFER is a suite of agent skills for Claude Code and Codex. Its first module, **vafer-research**, does multi-source web research and saves a run folder that follow-up questions reuse.
 
-Status: **0.1.0-alpha**, rebuilt on 2026-10-27. It has not yet been measured against the same model without the skill.
+Status: **0.2.0-alpha** (2026-10-29). It has not yet been measured against the same model without the skill.
 
 ## What it does
 
@@ -10,10 +10,12 @@ Status: **0.1.0-alpha**, rebuilt on 2026-10-27. It has not yet been measured aga
   - **Quick:** a few searches and an answer in chat, at about the cost of asking the model directly.
   - **Standard:** a short plan, parallel researchers when the question splits, an early draft, then one targeted wave to fill the gaps.
   - **Deep:** more researchers and up to two gap waves, for exhaustive lists and high-stakes questions.
+  - **Ultra:** Deep, with gap waves repeated until one finds nothing new and a counter-evidence search for every conclusion.
 - Cites only pages it actually opened. Key numbers, dates and quotes come from the primary record or from two independent sources. Summaries and news count only as leads.
 - Says plainly what it could not establish and which queries it tried, instead of filling gaps from memory.
 - Writes in the user's language, with inline citations and an as-of date.
-- Saves `plan.md`, notes and `report.md` under `.vafer/research/` and lists each run in `INDEX.md`, so a follow-up question starts from earlier work.
+- Checks its own figures: `scripts/vafer_check.py` saves a text copy of every cited page and matches each number, date and quote in the report against it, recomputes derived figures and lints citations. Anything it cannot confirm is fixed or marked †.
+- Saves `plan.md`, notes, page copies and `report.md` under `.vafer/research/`, so a follow-up question starts from earlier work and re-checks only what may have changed.
 
 ## Install
 
@@ -24,7 +26,7 @@ Copy `skills/vafer-research/` into your project:
 | Claude Code | `.claude/skills/vafer-research/` | `/vafer-research <question>` |
 | Codex | `.agents/skills/vafer-research/` | `$vafer-research <question>` (start Codex with `--search` for live results) |
 
-The skill needs a web search tool. Subagents, shell network access and a writable folder are optional; without them it falls back to doing the work itself and answering in chat.
+The skill needs a web search tool. Subagents, a shell with Python and network access, and a writable folder are optional; without them it falls back to doing the work itself, checking headline facts by hand and answering in chat.
 
 ## Why it was rebuilt
 

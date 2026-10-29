@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,8 @@ MAX_REFERENCES = 3
 MAX_REFERENCE_WORDS = 1000
 MAX_DESCRIPTION_CHARS = 450
 MAX_COMPATIBILITY_CHARS = 500
+MAX_SCRIPT_LINES = 600
+STDLIB = set(sys.stdlib_module_names) | {"__future__"}
 ALLOWED_FRONTMATTER = {"name", "description", "license", "compatibility", "metadata"}
 EMPHATIC = re.compile(r"\b(MUST|NEVER|ALWAYS|IMPORTANT|CRITICAL|REQUIRED)\b")
 BANNED_PHRASES = ("show your reasoning", "think step by step", "double-check", "double check")
@@ -48,9 +51,9 @@ class SkillHygieneTests(unittest.TestCase):
 
     def test_core_comes_first(self):
         body = split_skill()[1]
-        for heading in ("## Done when", "## Choose a tier", "## Quick", "## Standard and Deep"):
+        for heading in ("## Done when", "## Choose a tier", "## Quick", "## Standard, Deep and Ultra"):
             self.assertIn(heading, body)
-        self.assertLessEqual(len(body.split("## Standard and Deep")[0].split()), MAX_WORDS_BEFORE_LOOP)
+        self.assertLessEqual(len(body.split("## Standard, Deep and Ultra")[0].split()), MAX_WORDS_BEFORE_LOOP)
 
     def test_references_budget_and_links(self):
         refs = sorted((SKILL_DIR / "references").glob("*.md"))
@@ -74,8 +77,13 @@ class SkillHygieneTests(unittest.TestCase):
         for rule in KEY_RULES:
             self.assertIn(rule, body)
 
-    def test_no_scripts_in_m1(self):
-        self.assertFalse((SKILL_DIR / "scripts").exists())
+    def test_one_stdlib_script(self):
+        scripts = sorted((SKILL_DIR / "scripts").glob("*"))
+        self.assertEqual([s.name for s in scripts if s.suffix == ".py"], ["vafer_check.py"])
+        source = (SKILL_DIR / "scripts" / "vafer_check.py").read_text(encoding="utf-8")
+        self.assertLessEqual(len(source.splitlines()), MAX_SCRIPT_LINES)
+        for module in re.findall(r"^\s*(?:import|from)\s+([\w.]+)", source, re.M):
+            self.assertIn(module.split(".")[0], STDLIB, module)
 
     def test_codex_metadata_names_new_skill(self):
         text = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
