@@ -30,7 +30,7 @@ The skill needs a web search tool. Subagents, a shell with Python and network ac
 
 ## Why it was rebuilt
 
-Version 0.0.3 (`ultra-deep-research`) kept its evidence in an elaborate local store. In four paired comparisons it never beat the same model without the skill, and it was slower every time (see `docs/history/`). The rebuild follows the research summarized in `docs/superpowers/specs/2026-10-27-vafer-research-v0.1-design.md`:
+Version 0.0.3 (`ultra-deep-research`) kept its evidence in an elaborate local store. In four paired comparisons it never beat the same model without the skill, and it was slower every time (see `docs/history/`). The rebuild follows the research in `docs/research/`:
 - spend the effort on finding and checking information, not on record keeping;
 - scale the effort with the difficulty of the question;
 - keep the instructions short.
@@ -38,7 +38,7 @@ Version 0.0.3 (`ultra-deep-research`) kept its evidence in an elaborate local st
 ## Repository
 
 - `skills/vafer-research/`: the skill.
-- `tests/test_skill_hygiene.py`: keeps the skill short and free of ceremony. Run it with `python -m unittest discover -s tests -v`.
-- `docs/superpowers/`: the design and the plans.
+- `tests/`: keeps the skill short and free of ceremony, and tests `vafer_check.py`. Run them with `python -m unittest discover -s tests -v`.
+- `docs/research/2026-10-28-architecture-panel/architecture.md`: the 0.2 design.
 - `docs/research/`: the research evidence behind the design.
 - `docs/history/`: the v0.0.x evaluation records. The old code is at git tag `v0.0.3`.

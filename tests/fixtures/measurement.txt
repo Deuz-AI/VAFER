@@ -1,4 +1,0 @@
-Channel Pump Measurement
-Original synthetic measurement fixture.
-
-The pump reduced water loss by 42 percent under the stated test conditions. The measured quantity was water loss, not flow rate. This passage does not claim that water loss increased.
