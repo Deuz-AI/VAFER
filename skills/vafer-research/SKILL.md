@@ -5,7 +5,7 @@ compatibility: Needs a web search tool. Subagents, a shell with Python and netwo
 metadata:
   suite: vafer
   module: research
-  version: 0.3.0-alpha
+  version: 0.0.4
 ---
 
 # VAFER Research

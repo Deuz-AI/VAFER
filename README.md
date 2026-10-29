@@ -2,13 +2,13 @@
 
 VAFER is a suite of agent skills for Claude Code and Codex. Its first module, **vafer-research**, does multi-source web research. It writes a readable report in which every cited figure has been checked, and saves a run folder that follow-up questions reuse.
 
-Status: **v0.0.4** (package 0.3.0-alpha, 2026-10-29).
+Status: **v0.0.4** (2026-10-29).
 
 ## Results
 
 Question: "Yalova'nın tarihi" (the history of Yalova). Each arm ran the same model with the same prompt. A blind judge did not know which report came from which arm. It opened 26 cited pages, fact-checked 10–12 claims per report and scored each report out of 10.
 
-| | v0.0.4 | 0.2 | No skill |
+| | v0.0.4 | v0.0.4 first draft | No skill |
 |---|---|---|---|
 | Overall | **8.6** | 8.1 | 5.8 |
 | Accuracy | **8.5** | 8 | 5 |
