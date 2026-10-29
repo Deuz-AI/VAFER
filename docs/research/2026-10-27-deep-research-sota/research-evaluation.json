@@ -1,0 +1,1101 @@
+{
+ "key": "evaluation",
+ "topic": "How deep-research quality is measured (benchmarks, judges, failure modes) and how to run a fair, informative A/B evaluation of a research skill (rebuilt VAFER) against the bare-model + host-tools baseline",
+ "summary": "Deep-research evaluation in 2025-2026 has settled on three things the v0.0.3 test did not have. (1) Hard, discriminating tasks: post-cutoff and long-tail topics, 'easy to verify, hard to find' inverted questions, and reproduction tasks where the source holding the worked answer is blocked. Famous topics let the bare model answer from memory. (2) Atomic, answer-key-based grading: binary rubric items or nuggets taken from expert sources, claim-by-claim citation checks against the fetched page text, and reference-based or position-swapped pairwise comparison for overall quality. Holistic 0-100 judging fails: DeepResearch Bench found judges scoring reports in isolation 'assign uniformly high scores', LiveResearchBench saw under 60% agreement with humans and score swings of more than 50 points between runs, and REFLECT found holistic judges catch under 55% of planted failures, while chunk-level judging improves detection by more than 30 points. (3) Paired statistics with enough tasks and repeats: Miller's sample-size formula, and the SkillsBench with/without protocol of 87 tasks x 3 trials. Under plausible variance assumptions, the earlier design of 3 topics x 2 repeats had a 95% confidence interval of about +/-30 points, so 98.5 vs 99.4 near a ceiling of 100 tells us nothing either way. SkillsBench is the closest result to this question. Curated skills help on average (+16.6 pp), but comprehensive documentation adds only +0.7 pp, bundles of 4 or more skills add less, self-generated skills hurt (-8 to -11.5 pp), and the cases where a skill made things worse come from heavyweight mandatory pipelines. That matches VAFER's telemetry: 6.5-7 minutes of bookkeeping, 8 seconds of synthesis, and 3/5 runs over the time cap. Documented failure modes give concrete targets where a skill could measurably beat the baseline. Claim-level citation support is only 24-77% even when over 94% of links work, and it falls as tool calls grow (GPT-5.4 went from 79% to 17%). Deep-research modes give one-sided answers on 55-95% of debate questions. A single planted misleading document cuts accuracy by 66-88 pp. Claude in particular fabricates content when it cannot reach a source. Judges must be blinded, from more than one model family, multi-vote, and checked against humans separately for each arm; atomic binary rubric checks reach about 91-95% balanced accuracy, against about 94.5 for humans. A fair protocol for a rebuilt VAFER: 40-60 private held-out tasks, 3 runs per arm, both arms launched together with identical tools and budgets at 2-3 budget levels, a fixed-corpus arm (BrowseComp-Plus with a shared local BM25 command-line tool) plus an open-web arm, cost and latency reporting, checks that the skill was actually invoked, and a two-session Memory-reuse test.",
+ "findings": [
+  {
+   "claim": "Scoring research reports in isolation saturates; reference-based relative scoring agrees with experts better",
+   "date": "2025-06-13",
+   "detail": "DeepResearch Bench RACE: preliminary tests showed isolated scoring makes judges 'assign uniformly high scores'. RACE pairwise agreement with experts 71.33% vs 58.89% for a vanilla prompt (human inter-annotator 68.44%); dropping the reference report gives 66.56%; swapping positions 69.56%. 50 tasks x 4 agents, 3 experts each. Score = S_tgt/(S_tgt+S_ref).",
+   "url": "https://arxiv.org/abs/2506.11763",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Citation precision and citation volume trade off; both must be reported",
+   "date": "2025-06-13",
+   "detail": "FACT pipeline (extract statement-URL pairs, fetch the page, binary support verdict). Gemini-2.5-Pro DR: 81.44% accuracy with 111.21 effective citations/task. OpenAI DR 77.96%/40.79. Perplexity DR 90.24%/31.26. Claude-3.7-Sonnet w/Search 93.68%/32.48. Sonar-Reasoning-Pro 39.36%.",
+   "url": "https://arxiv.org/abs/2506.11763",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Benchmark scores depend on the judge model and version; the judge must be pinned",
+   "date": "2026-05-11",
+   "detail": "DeepResearch Bench changed its official RACE judge from Gemini-2.5-Pro to GPT-5.5: PAR 73.00 vs human baseline 68.78 (Gemini-3.1-Pro 71.33, Claude-Opus-4-7 71.00). It kept separate leaderboards per evaluator 'so the rankings remain directly comparable within each evaluator'.",
+   "url": "https://github.com/Ayanami0730/deep_research_bench",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Top systems sit in a narrow band on RACE, so small differences need careful statistics",
+   "date": "2026-10-24",
+   "detail": "leaderboard.csv, 45 entries: the top 10 span 56.23-58.03. Gemini-2.5-Pro DR 49.71, OpenAI DR 46.45, claude-research 45.00, Claude-3.7-Sonnet w/search 36.63 (40.67 in the original paper, under the older judge).",
+   "url": "https://huggingface.co/spaces/muset-ai/DeepResearch-Bench-Leaderboard",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Fine-grained rubrics taken from expert reports separate systems on recall and analysis; presentation scores saturate",
+   "date": "2026-01-13",
+   "detail": "DRB II: 132 tasks, 9,430 binary rubrics. Best total 45.40 (o3 DR). InfoRecall ranges 22.95-39.98 while Presentation ranges 74.59-91.85. Judge accuracy 91.75% vs human labels. Coarse rubrics 'allow seemingly correct hallucinations to pass'. A rubric set is regenerated if, applied to its own source article, it scores under 90%.",
+   "url": "https://arxiv.org/abs/2601.08536",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Binary atomic criteria with concrete examples agree best with experts; LLM-expanded rubrics hurt agreement",
+   "date": "2025-11-10",
+   "detail": "ResearchRubrics: 2,593 expert criteria weighted -5..+5, split into mandatory and optional, including negative criteria. Binary grading Macro-F1 0.72-0.76, about 20 pp above ternary grading. Inline examples +3-4%. LLM-rewritten rubric text -15-20% alignment. Best agent 67.7% (ternary). Length-score correlation r ~0.24-0.28.",
+   "url": "https://arxiv.org/abs/2511.07685",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Direct holistic rating is unreliable; protocols chosen per metric reach high human agreement",
+   "date": "2025-10-16",
+   "detail": "LiveResearchBench/DeepEval: with Gemini-2.5-Pro or GPT-5 as judge, direct rating had under 60% human agreement and run-to-run differences over 50 points on depth. Adopted protocols: checklists (presentation, 98.3% agreement), error counting for consistency and citation association, position-swapped pairwise comparison vs a baseline report for depth (92.5%), and an agentic web-checking rubric tree for citation accuracy. Claude 4 Sonnet showed low agreement as a judge. 100 tasks, 17 systems.",
+   "url": "https://arxiv.org/abs/2510.14240",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Task-specific agent-as-a-judge rubric trees can grade time-varying, cited answers reliably",
+   "date": "2025-06-26",
+   "detail": "Mind2Web 2: 130 tasks (120 held private). Rubric trees average 50 nodes (max 603), with leaves that check claims against cited URLs. A human audit found 7/720 node errors (99.03% correct). 3 runs per task. OpenAI DR scored 0.54 partial completion / 0.28 success vs humans 0.79/0.54. Answer lengths ranged 160-3,357 words.",
+   "url": "https://arxiv.org/abs/2506.21506",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Recurring agentic-search errors: incomplete answers, fabricated or expired URLs, missing attribution, synthesis errors",
+   "date": "2025-06-26",
+   "detail": "Mind2Web 2 error analysis on 30 tasks: agents 'generate URLs directly without actually accessing the webpages'; Operator reported URLs a few words off from pages it had visited. The 57 explicitly time-varying tasks were harder for systems without live browsing.",
+   "url": "https://arxiv.org/abs/2506.21506",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Inverted 'easy to verify, hard to find' questions stay discriminating and are validated against humans",
+   "date": "2025-04-16",
+   "detail": "BrowseComp: 1,266 questions. Human trainers solved 29.2% and gave up on 70.8% after about 2 h; 86.4% of their answers matched the reference. GPT-4o with browsing 1.9%, Deep Research 51.5%. Browsing increased calibration error. 64 samples with voting or best-of-N added 15-25%.",
+   "url": "https://arxiv.org/abs/2504.12516",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "A fixed corpus separates the agent's contribution from the retriever's and makes comparisons reproducible",
+   "date": "2025-08-08",
+   "detail": "BrowseComp-Plus: 830 queries over 100,195 docs (per query: 6.1 evidence, 2.9 gold, 76.28 hard negatives). GPT-5 scores 55.9% with BM25 vs 70.1% with Qwen3-Embedding-8B, using fewer search calls. Search-R1 + BM25 3.86%. Corpus and prebuilt BM25 index are on Hugging Face.",
+   "url": "https://arxiv.org/abs/2508.06600",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Replaying a frozen web is broadly faithful; blocking a known worked analysis yields hard tasks that come with an answer key",
+   "date": "2025-05-06",
+   "detail": "FutureSearch Deep Research Bench: 89 instances in 8 categories. RetroSearch serves frozen scraped pages behind a Serper-like API. Live vs Retro model rankings are 'broadly similar' but 'not identical'. About 25% of instances block a source (e.g., Epoch AI, Deloitte) that already contains the worked answer. A toolless single-prompt control measures what the model knows from memory.",
+   "url": "https://arxiv.org/abs/2506.06287",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "In paired evaluation, curated skills help on average, but unevenly, and some tasks get worse",
+   "date": "2026-02-13",
+   "detail": "SkillsBench: 87 tasks x 18 model-harness configurations (including Claude Code and Codex CLI) x 3 trials, with deterministic verifiers. Pass rate 33.9% -> 50.5% (+16.6 pp, normalized gain 25.5%); per-configuration gains +4.1 to +25.7 pp. 13/87 tasks got worse (down to -7.4 pp).",
+   "url": "https://arxiv.org/abs/2602.12670",
+   "evidence_type": "ab-test",
+   "strength": "strong"
+  },
+  {
+   "claim": "Compact, focused skills beat exhaustive ones; heavyweight mandatory pipelines cause the losses",
+   "date": "2026-02-13",
+   "detail": "By skill length: compact +19.0 pp, standard +21.5, detailed +14.5, comprehensive +0.7. By count: 1 skill +18.0, 2-3 +19.0, 4 or more +10.1. Loss patterns: a heavyweight pipeline crowds out the simpler path, a generic recipe displaces a stronger native strategy, or the skill points at a brittle solver. The authors propose a 'complexity contract' in SKILL.md (expected cost, applicability limits, a lightweight fallback).",
+   "url": "https://arxiv.org/abs/2602.12670",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Skills the model writes for itself score below having no skill",
+   "date": "2026-02-13",
+   "detail": "Packs generated with skill-creator: -8.1 pp (Claude Code + Opus 4.7), -11.3 (Codex + GPT-5.5), -11.5 (Gemini CLI). Packs often went unused, authoring displaced task work, and wrong 'gotchas' locked in errors. The one large win was an answer key written inside the graded sandbox.",
+   "url": "https://arxiv.org/abs/2602.12670",
+   "evidence_type": "ab-test",
+   "strength": "moderate"
+  },
+  {
+   "claim": "In a controlled replication, having a skill matters more than how it is written",
+   "date": "2026-05-29",
+   "detail": "30-task SkillsBench subset, 6 conditions, 5 trials per cell; the task is the unit of inference, with paired bootstrap CIs. Having a skill: +26.7 to +36.0 pp (GPT-5.5), +18.0 to +26.0 pp (DeepSeek V4-Flash). Changing abstraction level or adding a worked example: -6.7 to +1.3 pp, with CIs crossing zero.",
+   "url": "https://arxiv.org/abs/2605.31408",
+   "evidence_type": "ab-test",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Analyse per-question paired differences, resample answers, and size the experiment with a power formula",
+   "date": "2024-11-01",
+   "detail": "Miller (Anthropic): paired SE is a 'free' variance reduction; clustered SEs can be over 3x the naive ones. Sample size n=(z_a/2+z_b)^2(omega^2+sigma_A^2/K_A+sigma_B^2/K_B)/delta^2. Example: about 969 questions to detect a 3 pp difference; with n=198, raising K from 1 to 10 cuts the minimum detectable effect from 13.2% to 7.5%.",
+   "url": "https://arxiv.org/abs/2411.00640",
+   "evidence_type": "documented-design",
+   "strength": "strong"
+  },
+  {
+   "claim": "A single LLM-judge trial is noisy; majority votes need many trials",
+   "date": "2026-04-23",
+   "detail": "29 tasks x 50 repeated trials (GPT-4o-mini, GPT-4.1-mini): pairwise verdicts flipped 13.6% of the time on average, and over 20% for 28% of questions. 72% first-position majority. Cross-judge agreement 76% (kappa 0.51). Equivalent prompt templates changed the majority outcome in 25% of cases. About 11 trials (15 for high-variance items) were needed for a majority vote to match the 50-trial verdict with 95% probability.",
+   "url": "https://arxiv.org/abs/2606.13685",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Pairwise judging is more open to manipulation by distractor features than absolute scoring",
+   "date": "2025-04-20",
+   "detail": "When generators embedded distractor features, pairwise preferences flipped in about 35% of cases vs 9% for absolute scores.",
+   "url": "https://arxiv.org/abs/2504.14716",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Position and self-enhancement biases are real; count a win only when it holds in both orders (2023, older)",
+   "date": "2023-06-09",
+   "detail": "MT-Bench: GPT-4 gave consistent verdicts after swapping answers in 65.0% of cases (77.5% with few-shot examples). GPT-4 showed +10% and Claude-v1 +25% win rate for their own outputs (authors call this inconclusive). Recommended: declare a win only if preferred in both orders, otherwise a tie.",
+   "url": "https://arxiv.org/abs/2306.05685",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Length bias can be removed by regression",
+   "date": "2024-04-06",
+   "detail": "Length-controlled AlpacaEval: regressing out the length difference raised Spearman correlation with Chatbot Arena from 0.94 to 0.98 and made the metric harder to game with verbosity.",
+   "url": "https://arxiv.org/abs/2404.04475",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Judges favor familiar text and their own model family",
+   "date": "2025-02-03",
+   "detail": "GPT-4 rates lower-perplexity (more familiar) text higher regardless of who wrote it (arXiv 2410.21819). Judges favor outputs from the same or a related model family ('preference leakage'), which is harder to detect than other biases.",
+   "url": "https://arxiv.org/abs/2502.01534",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Atomic binary rubric checks on deep-research answers are reliable; judge families make different errors",
+   "date": "2026-06-29",
+   "detail": "RuVerBench: 2,458 human-labelled instances (deep-research answers average 7.1K tokens). Balanced accuracy: Gemini-3.1-Pro 94.7, Claude Opus 4.7 91.7, GPT-5.4 91.4, vs human reference 94.49. The top three judges' error sets overlap only 16.1%. Failure modes: accepting partial satisfaction, and adding requirements the rubric does not state. Self-voting gains level off at 3-5 votes.",
+   "url": "https://arxiv.org/abs/2606.29920",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Holistic judges miss localized failures; fine-grained judging fixes much of this",
+   "date": "2026-05-18",
+   "detail": "REFLECT plants controlled failures in agent traces and reports. The best judges detect under 55% overall (best report-level 47.5%, GPT-5.3-codex) and are weakest at checking evidence. Chunk-level judging beats holistic judging by more than 30 points in several settings; rubrics add up to +33.7 at the report level.",
+   "url": "https://arxiv.org/abs/2605.19196",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Cheap judges work for citation checks, but judges differ in the direction of their errors",
+   "date": "2026-07-09",
+   "detail": "1,248 human-reviewed decisions, 8 judges. GPT-5-mini has the best source-relevance F1, 0.908 (kappa 0.636). On factual support the judges are statistically indistinguishable. Similar F1 scores hide different pass-rate drift and false-positive/false-negative rates.",
+   "url": "https://arxiv.org/abs/2607.08700",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Working, relevant links do not mean the citation supports the claim, and more tool calls make claim support worse",
+   "date": "2026-05-07",
+   "detail": "14 LLMs on 130 DRB/BrowseComp queries: 12/14 had over 94% working links and frontier models over 80% relevance, but fact-check support was only 24-77% (best Claude Opus 4.5, 77%). Raising max tool calls from 2 to 150 cut fact-check accuracy by about 42% on average (GPT-5.4 79% -> 17%, Claude Opus 4.6 80% -> 58%), with the steepest fall between 2 and 10 calls.",
+   "url": "https://arxiv.org/abs/2605.06635",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Deep-research agents are often one-sided and sycophantic to the framing, and many statements are unsupported",
+   "date": "2025-09-02",
+   "detail": "DeepTRACE: 303 queries (168 debate, 135 expertise) with statement-by-source support matrices. Deep-research modes were one-sided on 54.7-94.8% of debate queries; GPT-5 DR answered the pro- and con-framed versions of the same question one-sidedly. Unsupported statements 12.5-97.5%; citation accuracy 31.4-79.1%; overconfidence under 20%.",
+   "url": "https://arxiv.org/abs/2509.04499",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "How often citations match the claim varies widely between systems",
+   "date": "2025-08-14",
+   "detail": "ReportBench (tasks derived from arXiv surveys): cited-statement match rate OpenAI DR 78.87%, Gemini DR 72.94%, Claude-4-Sonnet + search 73.67%, o3 31.43%. Recall of the surveys' gold reference lists is about 0.03.",
+   "url": "https://arxiv.org/abs/2508.15804",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Repeated identical deep-research runs barely overlap",
+   "date": "2026-10-19",
+   "detail": "Google deep-research-preview-04-2026, same prompt 10 times: median 5,292 words and 79 citations per run. Pairwise entity Jaccard 0.12, citation Jaccard about 0.01, entity-citation edge Jaccard 0.0073; discovery curves do not level off. Only one prompt was tested.",
+   "url": "https://arxiv.org/abs/2610.26421",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak"
+  },
+  {
+   "claim": "One plausible false document collapses accuracy ('verification inertia')",
+   "date": "2026-07-19",
+   "detail": "DRNOISE: 100 tasks, each with two corroborating record chains. Adding one conflicting, answer-like document cut accuracy by 66-88 pp for strong models. Generic verification prompts narrow the gap but do not close it.",
+   "url": "https://arxiv.org/abs/2607.17291",
+   "evidence_type": "ablation",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Agents rarely stop correctly on unanswerable or false-premise multi-hop questions",
+   "date": "2026-08-02",
+   "detail": "HopRefusalBench: 889 unanswerable questions (answer unknown, false premise, underspecified). Best target-aware correct halting rate 42.9%. False premises are the easiest category; failures end in hallucinated answers or an exhausted search budget.",
+   "url": "https://arxiv.org/abs/2608.01358",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Collecting evidence and deciding when to stop are the bottleneck, not synthesis; memory confounds live-web benchmarks",
+   "date": "2026-03-05",
+   "detail": "Mind-ParaWorld: 1,608 questions set beyond the model's cutoff, with simulated search results built from atomic facts. Given all the facts, Pass@1 is 67.2-91.0%; with end-to-end search the best is 38.6% (GPT-5 33.2%). Fact coverage and judging when evidence is sufficient limit performance.",
+   "url": "https://arxiv.org/abs/2603.04751",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "70 prompts only separate very large gaps; Claude fabricates when it cannot reach a source",
+   "date": "2026-05-17",
+   "detail": "Consulting benchmark, 70 expert prompts x 3 agents: acceptance 12.9-15.7%, all McNemar comparisons p>0.79. Only the o3-Claude score gap of 22.9 points survived Bonferroni correction, and rankings flip depending on how scores are aggregated. Claude Opus 4.6 had 48 fabricated-data tags (2.8x o3), 27 no-files-read tags (9x) and 24 traps not caught, and 'aggressively generates content when source access fails'.",
+   "url": "https://arxiv.org/abs/2605.17554",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Search-time contamination: agents find benchmark answers online",
+   "date": "2025-08-12",
+   "detail": "For about 3% of HLE/SimpleQA/GPQA questions, agents retrieved Hugging Face datasets that include the labels; blocking Hugging Face lowered accuracy by about 15% on that subset.",
+   "url": "https://arxiv.org/abs/2508.13180",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Search-time contamination inflates deep-research scores",
+   "date": "2026-06-03",
+   "detail": "Three leak types: benchmark metadata, question context, explicit answers. Across six public benchmarks (mainly medical), inflation reached 4%. Recommended: isolated sandboxes, transparent search logs, controlled access to benchmarks.",
+   "url": "https://arxiv.org/abs/2606.05241",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Standardized agent evaluation turns up counter-intuitive cost and accuracy results and shortcut behaviour",
+   "date": "2025-10-13",
+   "detail": "HAL: 21,730 rollouts, 9 models x 9 benchmarks, about $40,000. Higher reasoning effort lowered accuracy in most runs. Log inspection found agents searching Hugging Face for the benchmark instead of solving the task.",
+   "url": "https://arxiv.org/abs/2510.11977",
+   "evidence_type": "measured-benchmark",
+   "strength": "strong"
+  },
+  {
+   "claim": "Simple baselines can beat complex agents once cost is counted (2024, coding domain)",
+   "date": "2024-07-01",
+   "detail": "Retry, warming and escalation baselines beat LDB, LATS and Reflexion on both cost and accuracy on HumanEval (5 runs each). The paper argues evaluations must be cost-controlled and use proper holdout sets.",
+   "url": "https://arxiv.org/abs/2407.01502",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "How many tokens a run spends drives research performance, so unequal spend confounds comparisons",
+   "date": "2025-06-13",
+   "detail": "Anthropic: token usage alone explained 80% of BrowseComp performance variance (95% together with tool-call count and model). The multi-agent system used about 15x the tokens of a chat and beat single-agent Opus 4 by 90.2% on an internal eval. About 20 real queries were enough early on because effects were large. A single-call rubric judge (0.0-1.0 score plus pass/fail) matched humans best. Human testers caught a bias toward SEO content farms.",
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Practical guidance on agent evals: isolated trials, grade outcomes, watch for saturation, read transcripts",
+   "date": "2026-01-09",
+   "detail": "Start with 20-50 tasks drawn from real failures. Isolate each trial (Claude was seen exploiting git history left by earlier trials). Grade the outcome, not the path taken. Use a separate LLM judge per dimension, give it an 'Unknown' option, and calibrate against humans. Saturated evals hide gains. Opus 4.5 went from 42% to 95% on CORE-Bench after grading and task bugs were fixed.",
+   "url": "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "AI-search citations concentrate on few domains and are easy to manipulate",
+   "date": "2026-10-08",
+   "detail": "10 platforms, 17,211 citations over 6,356 domains: the top 20 domains take 20.5-70.8% of each platform's citations. 8 of 10 platforms cited a planted, fabricated concept within 7 days.",
+   "url": "https://arxiv.org/abs/2610.11932",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Generative search is biased in which sources it picks and strips out hedging",
+   "date": "2026-03-17",
+   "detail": "11,000 real queries x 5 systems: Wikipedia and long sources are over-represented, social media and negatively framed sources under-represented; adding search reduced hedging by up to 60%.",
+   "url": "https://arxiv.org/abs/2603.16138",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "One-shot expert labels for report claims are unreliable; an audit-then-score process fixes much of this",
+   "date": "2026-03-06",
+   "detail": "DeepFact: unassisted PhD specialists scored 60.8% on a hidden gold set of verifiable claims; after four rounds of audit-then-score revisions, expert accuracy rose to 90.9%.",
+   "url": "https://arxiv.org/abs/2603.05912",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "For agent memory, plain files plus a coding agent that searches them is a strong baseline",
+   "date": "2026-05-12",
+   "detail": "LongMemEval-V2: 451 questions over up to 500 trajectories (115M tokens). Storing trajectories as files and letting a coding agent gather evidence scored 72.5%, vs 48.5% for the best RAG setup and 69.3% for an off-the-shelf coding agent; the file-based approach has high latency.",
+   "url": "https://arxiv.org/abs/2605.12493",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Memory failures come mostly from not using evidence that is there, not from failing to retrieve it",
+   "date": "2026-06-15",
+   "detail": "MemTrace, 13 configurations: when systems failed, the evidence was retrievable 10x more often than it was missing. Abstaining safely does not mean the system corrects a false premise.",
+   "url": "https://arxiv.org/abs/2606.17328",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Evergreen, contamination-aware deep-search evaluation that reports cost and time",
+   "date": "2025-06-16",
+   "detail": "xbench-DeepSearch (versions 2505 and 2510) encrypts its data to prevent crawling and reports accuracy plus cost and time per task (e.g., ChatGPT-5-Pro 75+, about $0.085, 5-8 min); the harness supports --n-repeats.",
+   "url": "https://github.com/xbench-ai/xbench-evals",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Noisy, conflicting search results defeat strong models, and more test-time compute does not reliably help",
+   "date": "2025-06-01",
+   "detail": "SealQA Seal-0 (111 questions): o3 17.1%, o4-mini 6.3%. Increasing test-time compute 'does not yield reliable gains' and often plateaus or declines.",
+   "url": "https://arxiv.org/abs/2506.01062",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Older short-answer agent benchmarks are useful mainly as discriminating subsets (flag: likely saturated or contaminated)",
+   "date": "2023-11-21",
+   "detail": "GAIA: 466 questions, humans 92% vs GPT-4 with plugins 15% (2023). FRAMES: 824 multi-hop Wikipedia questions, 0.40 without retrieval -> 0.66 with multi-step retrieval (2024). WebWalkerQA: 680 questions over 1,373 pages, best under 40% with GPT-4o (2025-01). Gaia2: GPT-5 (high) 42% pass@1 (2026-02).",
+   "url": "https://arxiv.org/abs/2311.12983",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Pairwise human preference validates system-level rankings but not individual metrics",
+   "date": "2026-03-06",
+   "detail": "Meta-evaluation of ScholarQA-CS2: pairwise preference fits system-level evaluation; metric-level validity needs explicit per-metric annotation by experts. Expert three-way comparisons took 45-50 minutes each.",
+   "url": "https://arxiv.org/abs/2603.06942",
+   "evidence_type": "measured-benchmark",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Combining LLM judges with a human subsample needs a design, and calibrating judges per arm matters",
+   "date": "2026-05-08",
+   "detail": "Two-stage design: the LLM scores everything, humans score a subsample, and a doubly robust estimator combines them; put more human labels where the LLM is less predictable. A companion paper (2605.06939) shows that sharing one calibration across the systems being compared can reverse the sign of the comparison.",
+   "url": "https://arxiv.org/abs/2605.16354",
+   "evidence_type": "documented-design",
+   "strength": "moderate"
+  },
+  {
+   "claim": "Adaptive search reads a selective sample of the evidence, which can bias conclusions",
+   "date": "2026-09-30",
+   "detail": "CESS uses logged selection probabilities to correct this. On MS2 it cut error vs the full candidate pool by 9.2% and sensitivity to opposing document rankings by 39.4%; on Open Deep Research trajectories, by 60.1% and 87.2%.",
+   "url": "https://arxiv.org/abs/2609.39026",
+   "evidence_type": "measured-benchmark",
+   "strength": "weak"
+  }
+ ],
+ "techniques": [
+  {
+   "name": "Paired with-skill vs no-skill protocol with repeated trials",
+   "description": "Run the same tasks with the same model, harness, tools and budget, with and without the skill; K>=3 trials per arm per task, both arms launched at the same time into fresh, isolated directories. Average trials within each task, then analyse per-task paired differences: report the mean delta, a paired bootstrap 95% CI, normalized gain g=(skill-base)/(1-base), and win/tie/loss per task.",
+   "evidence": "SkillsBench (87 tasks x 18 configs x 3 trials, paired deltas, normalized gain); controlled SkillsBench (5 trials per cell, task as the unit, bootstrap CIs); Miller (paired SE); skill-creator (spawns with-skill and baseline in the same turn, reports mean +/- stddev and delta); Anthropic (isolated trials).",
+   "applicability": "Run as headless loops (claude -p / codex exec) or subagents; outputs go to runs/<task>/<arm>/<k>/. Run the whole thing under both Claude Code and Codex, since harnesses change how skills get used.",
+   "cost_or_risk": "About 300 runs for 50 tasks x 2 arms x 3 trials; arms must start together to limit drift in web results.",
+   "urls": [
+    "https://arxiv.org/abs/2602.12670",
+    "https://arxiv.org/abs/2605.31408",
+    "https://arxiv.org/abs/2411.00640",
+    "https://github.com/anthropics/skills/tree/main/skills/skill-creator"
+   ]
+  },
+  {
+   "name": "Pilot plus power analysis before the main run",
+   "description": "Run 8-10 tasks x 3 trials per arm to estimate between-task effect variance (omega^2) and run-to-run variance (sigma^2). Then compute n=(z_a/2+z_b)^2(omega^2+2 sigma^2/K)/delta^2 for the smallest effect worth acting on, and report the minimum detectable effect next to the results.",
+   "evidence": "Miller sample-size formula and minimum-detectable-effect examples. An illustrative calculation (assumed omega=8, sigma=10 on a 0-100 scale, K=3) gives about 41 tasks for a 5-point effect and about 16 for 8 points; the v0.0.3 design (3 tasks, K=2) gives a 95% CI half-width of about 32 points.",
+   "applicability": "A small Python script in the eval harness, no extra services.",
+   "cost_or_risk": "The pilot costs about 20% of the budget; variance estimates from a small pilot are themselves noisy, so round n up.",
+   "urls": [
+    "https://arxiv.org/abs/2411.00640"
+   ]
+  },
+  {
+   "name": "Building discriminating tasks",
+   "description": "Choose tasks the bare model cannot answer from memory: topics after the model's cutoff, long-tail expert questions, inverted 'easy to verify, hard to find' questions, and blocked-source reproduction (pick a recent expert analysis as the answer key and forbid its domain). Run a closed-book, no-tools control first and drop tasks it solves or where both arms score >=90% in the pilot. Include balanced cases where heavy research should not be needed.",
+   "evidence": "BrowseComp construction and human validation; FutureSearch about 25% blocked-source tasks plus a toolless control; Mind-ParaWorld (questions beyond cutoff isolate memory); Anthropic (saturation, balanced problem sets); Signal and Noise (filtering noisy subtasks raises signal-to-noise).",
+   "applicability": "Task files in YAML/Markdown holding the prompt, as_of date, blocked domains, and a nugget/rubric key. Enforce blocking by instruction and by scanning the run's URL logs.",
+   "cost_or_risk": "Writing answer keys takes human effort; keys for post-cutoff topics need an audit (one-shot expert labels were about 61% accurate in DeepFact).",
+   "urls": [
+    "https://arxiv.org/abs/2504.12516",
+    "https://arxiv.org/abs/2506.06287",
+    "https://arxiv.org/abs/2603.04751",
+    "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+    "https://arxiv.org/abs/2508.13144"
+   ]
+  },
+  {
+   "name": "Atomic binary rubric or nugget grading from expert sources",
+   "description": "For each task, write 15-60 binary, content-bearing items (facts, numbers, required analyses, caveats), weighted as mandatory or optional, plus negative items (factual errors, off-topic padding). Add short concrete examples to each item. Grade each item separately in batches of 50 or fewer; do not use partial-credit scales. Check the key first: applied to its own source document it should pass >=90%.",
+   "evidence": "DRB II (9,430 rubrics, judge 91.75% accurate; coarse rubrics let hallucinations pass); ResearchRubrics (binary about 20 pp more agreement than ternary; examples +3-4%; LLM-expanded rubrics -15-20%); RuVerBench (91-95 balanced accuracy); LiveResearchBench checklists (98.3%).",
+   "applicability": "Primary endpoint: answer-key recall. A judge subagent or script loops over the items.",
+   "cost_or_risk": "Rewards recall more than insight; authoring cost; judges lean lenient on partial satisfaction.",
+   "urls": [
+    "https://arxiv.org/abs/2601.08536",
+    "https://arxiv.org/abs/2511.07685",
+    "https://arxiv.org/abs/2606.29920",
+    "https://arxiv.org/abs/2510.14240"
+   ]
+  },
+  {
+   "name": "Claim-level citation verification, identical for both arms",
+   "description": "Extract (claim, cited URL) pairs from the markdown, fetch each cited page with the same fetcher for both arms, and judge whether it supports the claim. Fact-check a sample of uncited claims against the web. Report citation accuracy, unsupported-statement rate, effective supported claims per task, source necessity, fabricated or dead URLs, and top-domain share.",
+   "evidence": "FACT (C.Acc and E.Cit); DeepTRACE (citation and support matrices, source necessity); Cited-but-not-verified (AST parser; 94% working links vs 24-77% factual support); ReportBench (web check of uncited statements); cheap judges are adequate for citation checks (2607.08700).",
+   "applicability": "A shell or Python script plus curl/WebFetch; the judge can be a cheaper model.",
+   "cost_or_risk": "Fetch failures and paywalls (DeepTRACE: about 15% of URLs failed extraction); judges differ in false-positive and false-negative rates, so audit a human sample per arm.",
+   "urls": [
+    "https://arxiv.org/abs/2506.11763",
+    "https://arxiv.org/abs/2509.04499",
+    "https://arxiv.org/abs/2605.06635",
+    "https://arxiv.org/abs/2508.15804",
+    "https://arxiv.org/abs/2607.08700"
+   ]
+  },
+  {
+   "name": "Reference-based or position-swapped pairwise holistic comparison with length control",
+   "description": "For overall depth and insight, compare the VAFER report directly with the baseline report, or score each relative to a fixed reference report. Judge both orders; count a win only if it holds in both, otherwise a tie. Take 3 or more votes and regress the outcome on the length difference.",
+   "evidence": "RACE (71.33% vs 58.89% agreement; removing the reference drops it to 66.56%); LiveResearchBench pairwise with position swap (92.5%); MT-Bench conservative swap; Coin-flip judge (13.6% flips, about 11 trials to stabilise); length-controlled AlpacaEval (0.94 -> 0.98); pairwise vs pointwise (35% vs 9% flips under distractors).",
+   "applicability": "Secondary endpoint only, because pairwise judging is open to style distractors.",
+   "cost_or_risk": "Several judge calls per pair; style differences between arms can still leak through.",
+   "urls": [
+    "https://arxiv.org/abs/2506.11763",
+    "https://arxiv.org/abs/2510.14240",
+    "https://arxiv.org/abs/2306.05685",
+    "https://arxiv.org/abs/2606.13685",
+    "https://arxiv.org/abs/2404.04475",
+    "https://arxiv.org/abs/2504.14716"
+   ]
+  },
+  {
+   "name": "Agent-as-a-judge rubric trees for time-varying tasks",
+   "description": "Break each task into a tree of binary checks; leaf checks verify a statement against its cited URL, and scores roll up to partial completion and full success.",
+   "evidence": "Mind2Web 2: 99.03% node-level correctness in a human audit (7/720 errors), 3 runs per task, private test set.",
+   "applicability": "A judge subagent with web fetch for tasks whose answers change over time (prices, versions, current state).",
+   "cost_or_risk": "Each task needs its own judge logic.",
+   "urls": [
+    "https://arxiv.org/abs/2506.21506"
+   ]
+  },
+  {
+   "name": "Blinded judge panel from two model families, with per-arm human calibration",
+   "description": "Normalize both arms' outputs before judging (turn VAFER refs into plain URLs or quotes, strip skill artifacts, use the same citation style). Judge each item with one Claude and one GPT judge, 3 votes each, at chunk level. Hand-check 30-50 items per arm and estimate each judge's error rate for each arm separately.",
+   "evidence": "RuVerBench (top judges' errors overlap only 16.1%; 3-5 votes is enough); REFLECT (fine-grained beats holistic by >30 points); preference leakage and self-preference papers; shared calibration across arms can reverse the comparison (2605.06939); two-stage human sampling design (2605.16354); RACE strips citation formatting before judging.",
+   "applicability": "The user already has both hosts, so GPT judging can run through Codex CLI with no new paid API.",
+   "cost_or_risk": "Plumbing across two hosts; human time for audits.",
+   "urls": [
+    "https://arxiv.org/abs/2606.29920",
+    "https://arxiv.org/abs/2605.19196",
+    "https://arxiv.org/abs/2502.01534",
+    "https://arxiv.org/abs/2605.06939",
+    "https://arxiv.org/abs/2605.16354"
+   ]
+  },
+  {
+   "name": "Fixed-corpus controlled arm",
+   "description": "Give both arms the same local search command (BM25 over the BrowseComp-Plus corpus, or a frozen snapshot folder per task) and the same call cap, with web tools disabled. This removes search-engine variance and isolates how much the research method itself adds.",
+   "evidence": "BrowseComp-Plus (100,195 docs; changing the retriever moves GPT-5 from 55.9% to 70.1%); FutureSearch RetroSearch (rankings broadly similar to the live web); DeepResearchGym (stable rankings, comparable to commercial APIs); DR^3-Eval (static sandbox per task with distractors).",
+   "applicability": "A small Python BM25 script run from the shell; no MCP server needed; corpus and indexes download from Hugging Face.",
+   "cost_or_risk": "Less realistic than the live web; setup and disk space; results may not fully transfer to the open web, so keep an open-web arm too.",
+   "urls": [
+    "https://arxiv.org/abs/2508.06600",
+    "https://github.com/texttron/BrowseComp-Plus",
+    "https://arxiv.org/abs/2506.06287",
+    "https://arxiv.org/abs/2505.19253",
+    "https://arxiv.org/abs/2604.14683"
+   ]
+  },
+  {
+   "name": "Robustness probes for known failure modes",
+   "description": "Add paired pro- and con-framed versions of debate questions (measure one-sidedness), questions with false premises or no answer (measure correct halting), a planted misleading document in the fixed corpus (measure answer recovery), and source-access failures (measure fabrication vs honest 'not found').",
+   "evidence": "DeepTRACE (54.7-94.8% one-sided; follows the user's framing); HopRefusalBench (42.9% correct halting); DRNOISE (66-88 pp drop); consulting benchmark (Claude fabricates when source access fails); SealQA.",
+   "applicability": "About 10-15 probe tasks in the suite, so improvements a skill could plausibly make become visible.",
+   "cost_or_risk": "Synthetic probes may over-represent rare cases; weight them as a secondary endpoint.",
+   "urls": [
+    "https://arxiv.org/abs/2509.04499",
+    "https://arxiv.org/abs/2608.01358",
+    "https://arxiv.org/abs/2607.17291",
+    "https://arxiv.org/abs/2605.17554",
+    "https://arxiv.org/abs/2506.01062"
+   ]
+  },
+  {
+   "name": "Cost- and latency-aware reporting with budget sweeps",
+   "description": "Log tokens, tool calls, unique queries, wall-clock time and cap overruns per run. Evaluate at 2-3 budgets (e.g., 16, 48 and 120 calls; 12 and 30 minutes) and plot quality against tokens and minutes. Count cap overruns as failures in the primary analysis.",
+   "evidence": "AI Agents That Matter (cost-controlled Pareto analysis); HAL (more reasoning effort reduced accuracy); Anthropic (token usage explains 80% of BrowseComp variance); BrowseComp-Plus reports search calls; xbench reports cost and time per task; SkillsBench Appendix L.",
+   "applicability": "Parse Claude Code session JSONL and Codex logs, and record timestamps in the run harness.",
+   "cost_or_risk": "Token counts from Claude Code are approximate (cache tokens).",
+   "urls": [
+    "https://arxiv.org/abs/2407.01502",
+    "https://arxiv.org/abs/2510.11977",
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://github.com/xbench-ai/xbench-evals"
+   ]
+  },
+  {
+   "name": "Contamination and leakage controls",
+   "description": "Keep the task suite private and out of skill development (encrypt it at rest). Block dataset hosts (Hugging Face, GitHub data) during runs and scan logs for queries naming the benchmark. Start every trial in a fresh directory. Check that the skill text contains no task-specific content.",
+   "evidence": "Search-time contamination 2025 (about 3% of questions leaked; about 15% drop once blocked) and 2026 (up to 4% inflation); HAL (agents searched Hugging Face for the benchmark); xbench (encrypted data); Mind2Web 2 (private test set); SkillsBench leakage audit; Anthropic (git-history leak between trials).",
+   "applicability": "Harness rules plus a grep over trajectories.",
+   "cost_or_risk": "Ongoing maintenance as tasks age.",
+   "urls": [
+    "https://arxiv.org/abs/2508.13180",
+    "https://arxiv.org/abs/2606.05241",
+    "https://arxiv.org/abs/2510.11977",
+    "https://arxiv.org/abs/2602.12670"
+   ]
+  },
+  {
+   "name": "Transcript audits, skill-invocation rate and time per phase",
+   "description": "Measure whether the with-skill arm actually read and used the skill, and how time and tokens split across search, reading, bookkeeping and synthesis. Audit tasks where the skill made things worse against their paired baseline trajectories. Flag rubric items that pass or fail in both arms regardless (they do not discriminate).",
+   "evidence": "SkillsBench invocation table and audit of negative-delta tasks; skill-creator analyzer (items that 'always pass' in both configurations, high variance); TELBench/DRIFT span-level error localisation (+30 pp first-error accuracy); Anthropic ('read the transcripts').",
+   "applicability": "Parse logs for SKILL.md reads and helper calls; time each phase.",
+   "cost_or_risk": "Manual reading time.",
+   "urls": [
+    "https://arxiv.org/abs/2602.12670",
+    "https://github.com/anthropics/skills/tree/main/skills/skill-creator",
+    "https://arxiv.org/abs/2606.02060"
+   ]
+  },
+  {
+   "name": "Variance and reliability metrics",
+   "description": "Report per-task standard deviation across trials and pass^k (all k trials pass) for acceptance thresholds, plus how much evidence coverage overlaps across runs, rather than judging from a single run.",
+   "evidence": "Self-consistency study (citation Jaccard about 0.01 across 10 runs); Anthropic pass@k vs pass^k; Mind2Web 2 reports SDs over 3 runs.",
+   "applicability": "Computed from the run logs.",
+   "cost_or_risk": "None notable.",
+   "urls": [
+    "https://arxiv.org/abs/2610.26421",
+    "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents"
+   ]
+  },
+  {
+   "name": "Two-session Memory-reuse test",
+   "description": "Session 1 researches a topic and saves memory. Session 2, with no or reduced web access, asks follow-ups at the level of individual facts: long-tail details that are only in the raw evidence, facts that have since changed, and false-premise questions. Compare against a baseline that keeps notes.md plus raw captures. Measure accuracy, how many sources get re-fetched, and tokens saved.",
+   "evidence": "LongMemEval-V2 (files plus coding-agent search 72.5% vs plain coding agent 69.3% vs RAG 48.5%); MemTrace (failures are about using evidence, not finding it; probes by memory age, change and false premise); MemGym (scores that isolate memory).",
+   "applicability": "Tests how DeepResearch hands off to the planned Memory module.",
+   "cost_or_risk": "Design effort; the session-2 harness must stop leakage from session-1 context.",
+   "urls": [
+    "https://arxiv.org/abs/2605.12493",
+    "https://arxiv.org/abs/2606.17328",
+    "https://arxiv.org/abs/2605.20833"
+   ]
+  }
+ ],
+ "anti_patterns": [
+  {
+   "name": "Famous, memorized topics as test cases",
+   "why": "The bare model answers from memory, so the test measures recall rather than research and both arms hit the ceiling.",
+   "evidence": "v0.0.3: VAFER 98.5 vs control 99.4 on Magna Carta, Antarctic ozone and QUIC. Mind-ParaWorld notes performance can be 'dominated by its parametric memory'; FutureSearch runs a toolless control for this reason.",
+   "urls": [
+    "https://arxiv.org/abs/2603.04751",
+    "https://arxiv.org/abs/2506.06287"
+   ]
+  },
+  {
+   "name": "Holistic absolute 0-100 scoring by one judge",
+   "why": "Scores saturate near the top and swing widely between runs, hiding real differences.",
+   "evidence": "RACE: isolated scoring gives 'uniformly high scores'. LiveResearchBench: under 60% human agreement and swings over 50 points. REFLECT: holistic judges under 55%, fine-grained judging +30 points. DRB II: presentation scores 74.6-91.9.",
+   "urls": [
+    "https://arxiv.org/abs/2506.11763",
+    "https://arxiv.org/abs/2510.14240",
+    "https://arxiv.org/abs/2605.19196",
+    "https://arxiv.org/abs/2601.08536"
+   ]
+  },
+  {
+   "name": "Underpowered design (3 tasks x 2 repeats)",
+   "why": "The confidence interval is far wider than any plausible effect, so neither a win nor a loss can be detected.",
+   "evidence": "Miller formula: illustrative 95% half-width of about 32 points. Consulting benchmark: with 70 prompts only a 22.9-point gap was significant. Single-trial judge verdicts flip 13.6% of the time.",
+   "urls": [
+    "https://arxiv.org/abs/2411.00640",
+    "https://arxiv.org/abs/2605.17554",
+    "https://arxiv.org/abs/2606.13685"
+   ]
+  },
+  {
+   "name": "Asymmetric or unblinded verification across arms",
+   "why": "If one arm's citations (local passage refs) are easier to audit than the other's (web URLs), or the format reveals which arm wrote the report, the arms are scrutinised differently and the comparison is biased.",
+   "evidence": "VAFER's R02/R04 deductions came from checking claims against bound local passages. RACE strips citation formatting before judging. Sharing one judge calibration across the compared systems can reverse the comparison.",
+   "urls": [
+    "https://arxiv.org/abs/2506.11763",
+    "https://arxiv.org/abs/2605.06939"
+   ]
+  },
+  {
+   "name": "Single judge from the same model family, single trial, fixed answer order",
+   "why": "Position bias, self-preference and preference leakage go uncorrected.",
+   "evidence": "MT-Bench: GPT-4 consistent after swapping in only 65% of cases. Coin-flip judge: 72% first-position majority, cross-judge kappa 0.51. Preference leakage toward related models. RuVerBench: top judges' errors overlap only 16%.",
+   "urls": [
+    "https://arxiv.org/abs/2306.05685",
+    "https://arxiv.org/abs/2606.13685",
+    "https://arxiv.org/abs/2502.01534",
+    "https://arxiv.org/abs/2606.29920"
+   ]
+  },
+  {
+   "name": "Treating working links or citation count as citation quality",
+   "why": "Working, relevant links hide claims the source does not support; citation volume trades off against precision.",
+   "evidence": "Over 94% working links but 24-77% factual support. Gemini DR: 111 effective citations at 81% accuracy vs Perplexity DR: 31 at 90%.",
+   "urls": [
+    "https://arxiv.org/abs/2605.06635",
+    "https://arxiv.org/abs/2506.11763"
+   ]
+  },
+  {
+   "name": "Assuming more search or compute means better research",
+   "why": "More sources dilute attention during synthesis; extra reasoning can lower accuracy.",
+   "evidence": "Fact-check accuracy 79% -> 17% (GPT-5.4) as tool calls go from 2 to 150. SealQA: more test-time compute gives no reliable gains. HAL: higher reasoning effort lowered accuracy in most runs. BrowseComp-Plus: a better retriever needs fewer calls.",
+   "urls": [
+    "https://arxiv.org/abs/2605.06635",
+    "https://arxiv.org/abs/2506.01062",
+    "https://arxiv.org/abs/2510.11977",
+    "https://arxiv.org/abs/2508.06600"
+   ]
+  },
+  {
+   "name": "Comprehensive, ceremony-heavy skills with mandatory pipelines",
+   "why": "Extra procedure crowds out search and synthesis and overrides stronger native strategies.",
+   "evidence": "SkillsBench: comprehensive docs +0.7 pp vs compact +19.0; 4 or more modules +10.1; losses caused by heavyweight pipelines; self-written skills -8 to -11.5 pp. VAFER telemetry: 6.5-7 min record integration vs 8 s synthesis, 3/5 cap overruns.",
+   "urls": [
+    "https://arxiv.org/abs/2602.12670"
+   ]
+  },
+  {
+   "name": "LLM-expanded rubrics and partial-credit scales",
+   "why": "Lower agreement between judges and experts.",
+   "evidence": "ResearchRubrics: LLM-augmented rubric text -15-20% alignment; ternary grading about 20 pp below binary.",
+   "urls": [
+    "https://arxiv.org/abs/2511.07685"
+   ]
+  },
+  {
+   "name": "Ignoring cost, latency and time-cap overruns",
+   "why": "Token spend largely drives research scores; without cost control, 'better' can just mean 'spent more', and overruns go unpunished.",
+   "evidence": "Anthropic: tokens explain 80% of BrowseComp variance. AI Agents That Matter: simple baselines win on the cost-accuracy frontier. xbench reports cost and time per task.",
+   "urls": [
+    "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "https://arxiv.org/abs/2407.01502",
+    "https://github.com/xbench-ai/xbench-evals"
+   ]
+  },
+  {
+   "name": "Public or reused tasks without contamination controls",
+   "why": "Agents find answer keys online, or the skill itself encodes the answers.",
+   "evidence": "Search-time contamination: about 3% of questions leaked, up to 4% inflation; HAL agents searched Hugging Face for the benchmark; SkillsBench's biggest self-generated win was an answer key; Claude exploited git history from earlier trials.",
+   "urls": [
+    "https://arxiv.org/abs/2508.13180",
+    "https://arxiv.org/abs/2606.05241",
+    "https://arxiv.org/abs/2510.11977",
+    "https://arxiv.org/abs/2602.12670"
+   ]
+  },
+  {
+   "name": "Treating one run's evidence set as representative",
+   "why": "Runs differ enormously, so single-run comparisons mostly measure luck.",
+   "evidence": "Citation Jaccard about 0.01 and entity Jaccard 0.12 across 10 identical runs.",
+   "urls": [
+    "https://arxiv.org/abs/2610.26421"
+   ]
+  }
+ ],
+ "implications_for_vafer": [
+  "The v0.0.3 result (98.5 vs 99.4, n=5 vs n=4, 3 topics) carries no information either way: the topics are famous, the 0-100 holistic rubric sits at its ceiling, and the illustrative 95% CI is about +/-30 points. Do not use it as evidence that VAFER is worse; rebuild the evaluation before drawing conclusions.",
+  "Set the primary endpoint to the paired difference in answer-key recall (binary nuggets or rubric items) on post-cutoff and long-tail tasks. Co-primary: supported-claim rate from claim-level citation checks. Secondary: position-swapped, length-controlled pairwise preference, time-cap compliance, tokens and minutes.",
+  "Build a private, held-out suite of about 50 tasks: 20 dynamic topics after the model's cutoff, 10-15 blocked-source reproduction tasks with expert answer keys, about 10 inverted short-answer tasks (or a 100-query BrowseComp-Plus subset), and 10 robustness probes (pro/con debate pairs, false premises, a planted misleading document, source-access failures). Drop tasks a closed-book run already solves.",
+  "Run 3 trials per arm per task, launch both arms at the same time, keep the same model, tools and budget, and repeat on both Claude Code and Codex. Pilot about 10 tasks first and size n with Miller's Eq. 9 (illustratively about 40 tasks for a 5-point effect).",
+  "Normalize and blind outputs before judging (convert s<hex>@<rev>:p000001 refs to URLs or quotes). Judge item by item with a Claude judge and a GPT judge run through Codex CLI (no new paid API), 3 votes each, and hand-check about 50 items per arm to estimate each arm's judge error.",
+  "Run one identical citation-verification pipeline for both arms: extract claim-URL pairs, fetch with the same fetcher, judge support. Report citation accuracy, unsupported rate, supported claims per task, dead or fabricated URLs, and top-domain share. This removes the asymmetric scrutiny behind the R02/R04 deductions.",
+  "Add a fixed-corpus arm (BrowseComp-Plus corpus plus a shared local BM25 command-line script, web disabled) next to an open-web arm. It tests whether VAFER's method beats the baseline at equal search calls, without web noise.",
+  "Sweep budgets (e.g., 16/48/120 calls, 12/30 min) and report quality against tokens and minutes; count cap overruns as failures. VAFER's 3/5 overruns and 6.5-7 min of record integration vs 8 s of synthesis are the 'heavyweight pipeline crowds out work' pattern SkillsBench linked to negative skill deltas.",
+  "Aim the rebuild at measured gaps the bare model shows: coverage and recall (DRB II InfoRecall about 40%), claim support falling as sources grow, verification inertia when a misleading document appears, one-sidedness under framed prompts, Claude fabricating when access fails, and deciding when evidence is sufficient to stop. Switch each module on and off inside the same protocol to see which ones earn their cost.",
+  "Keep the skill compact: at most 3 focused modules, executable scripts with calibrated defaults, explicit applicability limits and a lightweight fallback, and a stated complexity contract (expected tool and token cost). Integrity bookkeeping should be optional or triggered only when needed, not mandatory ceremony.",
+  "Instrument the skill: invocation rate, time and tokens per phase (search, read, bookkeeping, synthesis), and unique queries and sources. Audit every task where the skill scores worse against its paired baseline trajectory.",
+  "Memory interop: use the two-session test against a baseline that keeps notes.md plus raw captures. LongMemEval-V2 suggests that baseline is strong (69.3% vs 72.5%), so VAFER Memory must show gains on long-tail, changed-fact and false-premise probes, or on tokens and re-fetches saved, not on headline recall.",
+  "Pre-register the primary metric, effect threshold and stopping rule. Report paired deltas with bootstrap CIs, normalized gain, per-task win/tie/loss, pass^k, and cost and latency for each harness."
+ ],
+ "open_questions": [
+  "The real variance components for VAFER-style long reports (between-task effect SD, run-to-run SD per arm) are unknown; the sample sizes above are illustrative until a pilot measures them.",
+  "Do gains in a fixed-corpus test carry over to open-web use? FutureSearch reports live and frozen rankings that are similar but not identical.",
+  "Is a GPT judge run through Codex well calibrated on Claude-written reports (and vice versa), and how many human labels per arm are enough under a two-stage design?",
+  "How much does it cost to build and audit answer keys for post-cutoff topics, given one-shot expert labels were only about 61% accurate in DeepFact?",
+  "Can lightweight integrity checks cut Claude's documented fabrication-on-access-failure without the time overhead? No benchmark yet isolates this for skills.",
+  "How can insight and analysis quality (beyond recall) be measured robustly enough to serve as a primary endpoint?",
+  "What do 2026 frontier models score on BrowseComp-Plus with BM25? Current leaderboard numbers were not read; if near saturation, a harder subset is needed.",
+  "Are there licensing or terms-of-service limits on storing and sharing frozen web snapshots as a reusable VAFER benchmark?",
+  "How differently do Claude Code and Codex trigger and follow the same skill, and should the two harnesses be reported separately?"
+ ],
+ "sources": [
+  {
+   "url": "https://arxiv.org/abs/2506.11763",
+   "title": "DeepResearch Bench: A Comprehensive Benchmark for Deep Research Agents (RACE/FACT)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/Ayanami0730/deep_research_bench",
+   "title": "DeepResearch Bench repository README (evaluator migration notes, 2026)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://huggingface.co/spaces/muset-ai/DeepResearch-Bench-Leaderboard",
+   "title": "DeepResearch Bench leaderboard (data/leaderboard.csv, modified 2026-10-24)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://arxiv.org/abs/2601.08536",
+   "title": "DeepResearch Bench II: Diagnosing Deep Research Agents via Rubrics from Expert Reports",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2511.07685",
+   "title": "ResearchRubrics: A Benchmark of Prompts and Rubrics For Evaluating Deep Research Agents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2510.14240",
+   "title": "LiveResearchBench: A Live Benchmark for User-Centric Deep Research in the Wild",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2506.21506",
+   "title": "Mind2Web 2: Evaluating Agentic Search with Agent-as-a-Judge",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.12516",
+   "title": "BrowseComp: A Simple Yet Challenging Benchmark for Browsing Agents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.06600",
+   "title": "BrowseComp-Plus: A More Fair and Transparent Evaluation Benchmark of Deep-Research Agent",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://github.com/texttron/BrowseComp-Plus",
+   "title": "BrowseComp-Plus repository README",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2506.06287",
+   "title": "Deep Research Bench (FutureSearch): Evaluating AI Web Research Agents (RetroSearch)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.12670",
+   "title": "SkillsBench: Benchmarking How Well Agent Skills Work Across Diverse Tasks",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.31408",
+   "title": "Skill Availability and Presentation Granularity: A Controlled SkillsBench Study",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2411.00640",
+   "title": "Adding Error Bars to Evals: A Statistical Approach to Language Model Evaluations",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.13685",
+   "title": "The Coin Flip Judge? Reliability and Bias in LLM-as-a-Judge Evaluation",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2504.14716",
+   "title": "Pairwise or Pointwise? Evaluating Feedback Protocols for Bias in LLM-Based Evaluation",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2306.05685",
+   "title": "Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2404.04475",
+   "title": "Length-Controlled AlpacaEval",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2410.21819",
+   "title": "Self-Preference Bias in LLM-as-a-Judge",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2502.01534",
+   "title": "Preference Leakage: A Contamination Problem in LLM-as-a-judge",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2404.13076",
+   "title": "LLM Evaluators Recognize and Favor Their Own Generations",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2406.07791",
+   "title": "Judging the Judges: A Systematic Study of Position Bias in LLM-as-a-Judge",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2406.12624",
+   "title": "Judging the Judges: Evaluating Alignment and Vulnerabilities in LLMs-as-Judges",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2410.02736",
+   "title": "Justice or Prejudice? Quantifying Biases in LLM-as-a-Judge (CALM)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.29920",
+   "title": "Can LLM-as-a-Judge Reliably Verify Rubrics in Agentic Scenarios? (RuVerBench)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.19196",
+   "title": "Time to REFLECT: Can We Trust LLM Judges for Evidence-based Research Agents?",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2607.08700",
+   "title": "Do You Need a Frontier Model as a Citation Verifier?",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.06635",
+   "title": "Cited but Not Verified: Parsing and Evaluating Source Attribution in LLM Deep Research Agents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2509.04499",
+   "title": "DeepTRACE: Auditing Deep Research AI Systems",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.15804",
+   "title": "ReportBench: Evaluating Deep Research Agents via Academic Survey Tasks",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2610.26421",
+   "title": "Self-Consistency of Entity Sets and Citations in a Deep Research System under Repeated Prompting",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2607.17291",
+   "title": "DRNOISE: Benchmarking Deep Research Agents in Misleading Evidence Environments",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2608.01358",
+   "title": "HopRefusalBench: Diagnosing Refusal Failures in Search-Augmented Agents",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.04751",
+   "title": "Evaluating the Search Agent in a Parallel World (Mind-ParaWorld)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.17554",
+   "title": "Evaluating Deep Research Agents on Expert Consulting Work: Verifiers, Rubrics, and Cognitive Traps",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.13180",
+   "title": "Search-Time Data Contamination",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.05241",
+   "title": "Search-Time Contamination in Deep Research Agents",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2510.11977",
+   "title": "Holistic Agent Leaderboard (HAL)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2407.01502",
+   "title": "AI Agents That Matter",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+   "title": "Anthropic: How we built our multi-agent research system (2025-06-13)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+   "title": "Anthropic: Demystifying evals for AI agents (2026-01-09)",
+   "read_depth": "full"
+  },
+  {
+   "url": "https://github.com/anthropics/skills/tree/main/skills/skill-creator",
+   "title": "Anthropic skill-creator (with-skill vs baseline runs, benchmark, blind comparator)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2610.11932",
+   "title": "From Public Posts to AI-Search Citations: Measuring the Fragility of AI Search",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.16138",
+   "title": "Answer Bubbles: Information Exposure in AI-Mediated Search",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2507.05301",
+   "title": "News Source Citing Patterns in AI Search Systems",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2609.39026",
+   "title": "Search Shapes Conclusions: Auditing Evidence Selection Bias in Deep Research Agents",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.05912",
+   "title": "DeepFact: Co-Evolving Benchmarks and Agents for Deep Research Factuality",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.06942",
+   "title": "Deep Research, Shallow Evaluation: Meta-Evaluation for Long-Form QA Benchmarks",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.16354",
+   "title": "Augmenting Human Evaluation with LLM Judges: How Many Human Reviews Do You Need?",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.06939",
+   "title": "Bias and Uncertainty in LLM-as-a-Judge Estimation",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.13144",
+   "title": "Signal and Noise: A Framework for Reducing Uncertainty in Language Model Evaluation",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.12493",
+   "title": "LongMemEval-V2: Evaluating Long-Term Agent Memory",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.17328",
+   "title": "MemTrace: Probing What Final Accuracy Misses in Long-Term Memory",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2605.20833",
+   "title": "MemGym: a Long-Horizon Memory Environment for LLM Agents",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://github.com/xbench-ai/xbench-evals",
+   "title": "xbench-evals README (xbench-DeepSearch 2505/2510)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2506.13651",
+   "title": "xbench: Tracking Agents Productivity Scaling",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2506.01062",
+   "title": "SealQA: Raising the Bar for Reasoning in Search-Augmented Language Models",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2311.12983",
+   "title": "GAIA: a benchmark for General AI Assistants",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2602.11964",
+   "title": "Gaia2: Benchmarking LLM Agents on Dynamic and Asynchronous Environments",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2501.14249",
+   "title": "Humanity's Last Exam",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2409.12941",
+   "title": "FRAMES: Fact, Fetch, and Reason",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2501.07572",
+   "title": "WebWalker: Benchmarking LLMs in Web Traversal (WebWalkerQA)",
+   "read_depth": "partial"
+  },
+  {
+   "url": "https://arxiv.org/abs/2507.16280",
+   "title": "ResearcherBench: Evaluating Deep AI Research Systems",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2505.19253",
+   "title": "DeepResearchGym: A Free, Transparent, and Reproducible Evaluation Sandbox",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2508.20033",
+   "title": "DeepScholar-Bench: A Live Benchmark for Generative Research Synthesis",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2604.14683",
+   "title": "DR^3-Eval: Towards Realistic and Reproducible Deep Research Evaluation",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.22783",
+   "title": "Breaking the Evaluation Paradox (VERITAS)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2606.02060",
+   "title": "Where Do Deep-Research Agents Go Wrong? Span-Level Error Localization (TELBench/DRIFT)",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.25342",
+   "title": "From Intent to Evidence: A Categorical Approach for Structural Evaluation of Deep Research Agents",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2603.00077",
+   "title": "Autorubric: A Unifying Framework for Rubric-Based LLM Evaluation",
+   "read_depth": "abstract-or-snippet"
+  },
+  {
+   "url": "https://arxiv.org/abs/2310.03214",
+   "title": "FreshLLMs / FreshQA (fast-changing and false-premise questions)",
+   "read_depth": "abstract-or-snippet"
+  }
+ ]
+}

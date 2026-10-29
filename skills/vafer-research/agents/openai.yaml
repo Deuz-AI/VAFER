@@ -1,0 +1,4 @@
+interface:
+  display_name: "VAFER Research"
+  short_description: "Cited multi-source research with reusable notes"
+  default_prompt: "Use $vafer-research to research this question and cite the pages you used."
