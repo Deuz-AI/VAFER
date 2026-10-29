@@ -61,6 +61,11 @@ class RunCase(unittest.TestCase):
 
 
 class NumberTests(unittest.TestCase):
+    def test_uppercase_turkish_scale_words_and_huge_numbers(self):
+        self.assertEqual(values("4 BİN 472"), [Decimal(4472)])
+        self.assertEqual(values("12,3 MİLYON"), [Decimal(12300000)])
+        self.assertFalse(vc.rounds_to(Decimal("1e40"), Decimal(3), 30))
+
     def test_turkish_and_english_formats(self):
         self.assertEqual(values("1.234,5"), [Decimal("1234.5")])
         self.assertEqual(values("1,234.5"), [Decimal("1234.5")])

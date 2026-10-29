@@ -277,7 +277,7 @@ def mask(text: str) -> str:
 
 def spelled(m) -> list:
     """Readings of a written-out number: `4 bin 472`, `bin 550`, `12,3 milyon`, `1.2 million`, `yüz bin`."""
-    exp, tail = SCALE[m.group("m").lower()], int(m.group("tail") or 0)
+    exp, tail = SCALE.get(m.group("m").replace("İ", "i").replace("I", "ı").lower().replace("ı", "i"), 0), int(m.group("tail") or 0)
     base = parse_number(m.group("n")) if m.group("n") else [(Decimal(100 if m.group("yuz") else 1), 0)]
     return [(v.scaleb(exp) + tail, d - exp if d and not tail else 0) for v, d in base]
 
@@ -292,7 +292,10 @@ def numbers(text: str, masked=False) -> list:
     return sorted(out, key=lambda n: n.start)
 
 def rounds_to(src: Decimal, value: Decimal, places: int) -> bool:
-    return src == value or src.quantize(Decimal(1).scaleb(-places), ROUND_HALF_UP) == value
+    try:
+        return src == value or src.quantize(Decimal(1).scaleb(-places), ROUND_HALF_UP) == value
+    except ArithmeticError:
+        return False
 
 def num_matches(num: Num, pool) -> bool:
     return any(rounds_to(s, v, d) for v, d in num.cands for s, _ in pool)
