@@ -1,0 +1,76 @@
+## t2 v0.0.4
+lead ab569b7fdce2cbf4b: 11:57:01 -> 12:19:54 (22m52s)
+agent | role | start | end | wall | calls | WebSearch | WebFetch | Bash | Read | Write/Edit | Agent | fetch-urls | vc fetch/check/diff | errors | out tok
+ab569b7f | LEAD | 11:57:01 | 12:19:54 | 22m52s | 55 | 0 | 0 | 34 | 0 | 9 | 11 | 0 | 0/11/1 | 4 | 77881
+a1c7b546 | Researcher S4 Republic | 11:58:40 | 12:02:27 | 3m47s | 33 | 12 | 3 | 15 | 0 | 2 | 0 | 13 | 2/0/0 | 0 | 16561
+a3a5087c | Researcher S1 antiquity | 11:57:58 | 12:04:02 | 6m03s | 28 | 8 | 8 | 8 | 0 | 3 | 0 | 8 | 1/0/0 | 0 | 14211
+a60084c9 | Researcher S3 occupation | 11:58:26 | 12:02:17 | 3m50s | 26 | 4 | 1 | 18 | 0 | 2 | 0 | 10 | 2/0/0 | 0 | 15125
+a6aafb54 | Adjudicator Termal restoration year | 12:04:25 | 12:06:24 | 1m59s | 17 | 4 | 1 | 10 | 0 | 1 | 0 | 7 | 3/0/0 | 0 | 7475
+a9721ec1 | Editor pass on report | 12:16:47 | 12:18:26 | 1m39s | 7 | 0 | 0 | 4 | 2 | 1 | 0 | 0 | 0/0/0 | 0 | 12279
+abcdd445 | Gap researcher G2 demography | 12:04:56 | 12:10:22 | 5m25s | 46 | 15 | 4 | 24 | 0 | 2 | 0 | 14 | 4/0/0 | 0 | 19190
+ac1d2b7f | Gap-finder Yalova history | 11:58:57 | 11:59:47 | 0m49s | 6 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0/0/0 | 0 | 3456
+ae92d5b5 | Researcher S2 Ottoman | 11:58:13 | 12:02:50 | 4m36s | 33 | 11 | 2 | 17 | 0 | 2 | 0 | 10 | 4/0/0 | 0 | 17956
+af9cddc9 | Gap researcher G1 medieval | 12:04:40 | 12:08:50 | 4m09s | 38 | 12 | 7 | 12 | 4 | 2 | 0 | 16 | 3/0/0 | 4 | 17986
+afc0c4fb | Gap researcher G3 prehistory+today | 12:05:11 | 12:09:42 | 4m30s | 44 | 17 | 14 | 8 | 0 | 4 | 0 | 10 | 1/0/0 | 1 | 16316
+afcbfd85 | Researcher S5 earthquake | 11:58:54 | 12:03:30 | 4m35s | 29 | 11 | 1 | 14 | 0 | 2 | 0 | 14 | 2/0/0 | 1 | 13297
+TOTAL calls 362; agents 12 (subagents 11); out tokens 231733; cache-read tokens 27408344
+by tool: Agent=11, Bash=164, Edit=3, Read=6, ToolSearch=11, WebFetch=41, WebSearch=99, Write=27
+bash kinds: bash:copy/move=2, bash:inspect=103, bash:mkdir=1, bash:python other=20, bash:vafer_check check=11, bash:vafer_check diff=1, bash:vafer_check fetch=22, bash:vafer_check other=4, errors=10, fetch-urls=102, read:snapshot=1
+
+## t2 v0.2 (first draft)
+lead affe8cbfcbebb9c08: 11:57:06 -> 12:10:45 (13m38s)
+agent | role | start | end | wall | calls | WebSearch | WebFetch | Bash | Read | Write/Edit | Agent | fetch-urls | vc fetch/check/diff | errors | out tok
+affe8cbf | LEAD | 11:57:06 | 12:10:45 | 13m38s | 56 | 11 | 0 | 32 | 1 | 5 | 5 | 9 | 4/1/0 | 3 | 63319
+a32d9daa | Gap-finder for Yalova history | 11:57:51 | 11:59:24 | 1m33s | 6 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0/0/0 | 0 | 3254
+a4e869a9 | Researcher A: antiquity/Byzantine | 11:58:48 | 12:03:00 | 4m11s | 28 | 12 | 0 | 14 | 0 | 1 | 0 | 23 | 4/0/0 | 0 | 17624
+a54c7105 | Researcher C1: War of Independence | 11:59:14 | 12:04:16 | 5m01s | 39 | 11 | 0 | 26 | 0 | 1 | 0 | 13 | 5/0/0 | 0 | 23381
+a754c540 | Researcher C2: Republic era | 11:59:28 | 12:04:32 | 5m04s | 41 | 16 | 0 | 23 | 0 | 1 | 0 | 38 | 12/0/0 | 0 | 20833
+a994aadc | Researcher B: Ottoman era | 11:59:01 | 12:03:09 | 4m07s | 36 | 13 | 0 | 21 | 0 | 1 | 0 | 4 | 4/0/0 | 0 | 20143
+TOTAL calls 206; agents 6 (subagents 5); out tokens 148554; cache-read tokens 17815457
+by tool: Agent=5, Bash=116, Edit=1, Read=1, ToolSearch=7, WebSearch=68, Write=8
+bash kinds: bash:inspect=75, bash:mkdir=1, bash:other=1, bash:python other=5, bash:vafer_check check=1, bash:vafer_check fetch=29, bash:vafer_check other=4, errors=3, fetch-urls=87
+
+## t2 bare
+lead a5d8156d1758e2822: 11:57:10 -> 12:02:10 (4m59s)
+agent | role | start | end | wall | calls | WebSearch | WebFetch | Bash | Read | Write/Edit | Agent | fetch-urls | vc fetch/check/diff | errors | out tok
+a5d8156d | LEAD | 11:57:10 | 12:02:10 | 4m59s | 25 | 5 | 11 | 7 | 0 | 1 | 0 | 0 | 0/0/0 | 0 | 19420
+TOTAL calls 25; agents 1 (subagents 0); out tokens 19420; cache-read tokens 1166612
+by tool: Bash=7, ToolSearch=1, WebFetch=11, WebSearch=5, Write=1
+bash kinds: bash:date=2, bash:inspect=3, bash:mkdir=1, bash:python other=1
+
+## t2 judge
+lead afb4b61ca239b5b72: 12:20:06 -> 12:25:34 (5m27s)
+agent | role | start | end | wall | calls | WebSearch | WebFetch | Bash | Read | Write/Edit | Agent | fetch-urls | vc fetch/check/diff | errors | out tok
+afb4b61c | LEAD | 12:20:06 | 12:25:34 | 5m27s | 28 | 0 | 0 | 25 | 3 | 0 | 0 | 0 | 0/0/0 | 0 | 16676
+TOTAL calls 28; agents 1 (subagents 0); out tokens 16676; cache-read tokens 2789611
+by tool: Bash=25, Read=3
+bash kinds: bash:inspect=24, bash:python other=1
+
+## t1 vafer (0.2.0-alpha, first live run)
+lead ae3c486b6eb775c52: 11:18:26 -> 11:42:27 (24m00s)
+agent | role | start | end | wall | calls | WebSearch | WebFetch | Bash | Read | Write/Edit | Agent | fetch-urls | vc fetch/check/diff | errors | out tok
+ae3c486b | LEAD | 11:18:26 | 11:42:27 | 24m00s | 71 | 12 | 2 | 26 | 1 | 24 | 5 | 11 | 4/4/0 | 2 | 75881
+a4eec9d8 | R3 1920-21 occupation Yalova | 11:21:00 | 11:26:41 | 5m40s | 37 | 7 | 1 | 27 | 0 | 1 | 0 | 14 | 6/0/0 | 0 | 23234
+a87b233b | R1 antiquity Byzantine Yalova | 11:20:28 | 11:25:50 | 5m21s | 33 | 11 | 0 | 20 | 0 | 1 | 0 | 24 | 5/0/0 | 0 | 18978
+a908e9fe | R2 Ottoman Yalova | 11:20:44 | 11:28:22 | 7m37s | 51 | 16 | 0 | 32 | 1 | 1 | 0 | 21 | 6/0/0 | 3 | 29528
+abaf2e2b | Gap-finder Yalova history | 11:19:03 | 11:19:58 | 0m54s | 6 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0/0/0 | 0 | 3981
+afd19adf | R4 Republic era Yalova | 11:21:17 | 11:31:39 | 10m22s | 76 | 20 | 3 | 49 | 0 | 1 | 0 | 26 | 15/0/0 | 0 | 29489
+TOTAL calls 274; agents 6 (subagents 5); out tokens 181091; cache-read tokens 25377172
+by tool: Agent=5, Bash=154, Edit=19, Read=2, TaskStop=1, ToolSearch=7, WebFetch=6, WebSearch=71, Write=9
+bash kinds: bash:copy/move=1, bash:download=3, bash:inspect=81, bash:mkdir=1, bash:other=1, bash:python other=22, bash:vafer_check check=4, bash:vafer_check fetch=36, bash:vafer_check other=5, errors=5, fetch-urls=96
+
+## t1 bare
+lead afdc4aedb2c52b348: 11:18:30 -> 11:23:32 (5m01s)
+agent | role | start | end | wall | calls | WebSearch | WebFetch | Bash | Read | Write/Edit | Agent | fetch-urls | vc fetch/check/diff | errors | out tok
+afdc4aed | LEAD | 11:18:30 | 11:23:32 | 5m01s | 32 | 12 | 8 | 10 | 0 | 1 | 0 | 0 | 0/0/0 | 1 | 23615
+TOTAL calls 32; agents 1 (subagents 0); out tokens 23615; cache-read tokens 1476373
+by tool: Bash=10, ToolSearch=1, WebFetch=8, WebSearch=12, Write=1
+bash kinds: bash:inspect=6, bash:python other=4, errors=1
+
+## t1 judge
+lead a45b0f6660286003a: 11:42:42 -> 11:47:21 (4m39s)
+agent | role | start | end | wall | calls | WebSearch | WebFetch | Bash | Read | Write/Edit | Agent | fetch-urls | vc fetch/check/diff | errors | out tok
+a45b0f66 | LEAD | 11:42:42 | 11:47:21 | 4m39s | 22 | 0 | 0 | 20 | 2 | 0 | 0 | 0 | 0/0/0 | 1 | 14950
+TOTAL calls 22; agents 1 (subagents 0); out tokens 14950; cache-read tokens 2236295
+by tool: Bash=20, Read=2
+bash kinds: bash:inspect=15, bash:python other=5, errors=1
