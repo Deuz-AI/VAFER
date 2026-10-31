@@ -108,6 +108,20 @@ class ResearchSkillTests(unittest.TestCase):
         for command in ("assemble", "--find", "--section"):
             self.assertIn(command, body)
 
+    def test_rewrite_keeps_markers(self):
+        # check finds the disagreement table only by <!-- vafer:end -->; diff does not notice a dropped marker
+        rewrite = [line for line in split_skill(SKILL_DIR)[1].splitlines() if "rewrite report.md" in line]
+        self.assertTrue(rewrite)
+        for line in rewrite:
+            self.assertIn("<!-- vafer:", line)
+
+    def test_brief_section_ids_lowercase(self):
+        # assemble lowercases plan ids, so sections/S1.md is read twice on a case-insensitive disk
+        text = (SKILL_DIR / "references" / "briefs.md").read_text(encoding="utf-8")
+        self.assertIn("`{id}` is lowercase", text)
+        for sid in re.findall(r"Your section: (\S+) ", text):
+            self.assertTrue(sid == "{id}" or sid.islower(), sid)
+
     def test_lookup_has_no_shell_glob_and_names_fallback(self):
         rg_lines = []
         for name in ("SKILL.md", "references/reuse.md", "references/hosts.md"):

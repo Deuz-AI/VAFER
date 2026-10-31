@@ -1,6 +1,6 @@
 # Briefs
 
-A subagent sees only its brief and the files it names, so put everything else in the brief. Send all of a launch's briefs in one message. On Claude Code, use fresh `general-purpose` subagents, not forks. `{cmd}` is the full command, `<python> <absolute skill folder>/scripts/vafer_check.py`.
+A subagent sees only its brief and the files it names, so put everything else in the brief. Send all of a launch's briefs in one message. On Claude Code, use fresh `general-purpose` subagents, not forks. `{cmd}` is the full command, `<python> <absolute skill folder>/scripts/vafer_check.py`. `{id}` is lowercase, such as `s1` or `f1`.
 
 ## Gap-finder
 
@@ -33,7 +33,7 @@ Reply in at most 200 words: rows settled and rows open; the conflict list, one l
 ## Example (one section of a tariff comparison)
 
 ```text
-Your section: S1 İSKİ (Istanbul) residential water tariffs in 2026. Rows: tariff per m³ by band (record: İSKİ tariff table, 2026; [prior] "İSKİ su tarifesi"); date and decision of the change (record: İBB council decision); share of the bill that is wastewater fee (record: İSKİ tariff table).
+Your section: s1 İSKİ (Istanbul) residential water tariffs in 2026. Rows: tariff per m³ by band (record: İSKİ tariff table, 2026; [prior] "İSKİ su tarifesi"); date and decision of the change (record: İBB council decision); share of the bill that is wastewater fee (record: İSKİ tariff table).
 Others cover: ASKİ (Ankara); İZSU (İzmir); national rules on water pricing.
 Start with: "İSKİ su tarifesi 2026", "İBB meclis kararı su tarifesi 2026", "İSKİ tarife değişikliği".
 ```
