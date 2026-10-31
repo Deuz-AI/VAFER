@@ -611,10 +611,60 @@ class AssembleTests(RunCase):
     def test_assemble_rerun_idempotent(self):
         first = self.assemble()
         self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x]. Takip sonucu eklendi.")
-        self.assemble()
+        folded = self.assemble()  # a follow-up verdict folded into a section
+        self.assertIn("Takip sonucu eklendi.", folded)
+        self.assertEqual((folded.count(vc.END_MARK), folded.count(vc.SOURCES_MARK)), (1, 1))
+        self.assertEqual(vc.parse_report(folded)[1], vc.parse_report(first)[1])
         self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x].")
         self.assertEqual(self.assemble(), first)
         self.assertEqual((first.count(vc.END_MARK), first.count(vc.SOURCES_MARK)), (1, 1))
+
+    def test_assemble_drops_marker_lines_from_drafts(self):
+        self.section("_end", vc.END_MARK + "\n## Belirsizlikler\n\nBilinmiyor.")
+        self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x].\n\n" + vc.SOURCES_MARK)
+        text = self.assemble()
+        self.assertEqual((text.count(vc.END_MARK), text.count(vc.SOURCES_MARK)), (1, 1))
+        self.assertIn(vc.END_MARK + "\n## Belirsizlikler", text)
+
+    def test_assemble_section_file_name_in_any_case(self):
+        (self.run / "sections" / "s1.md").unlink()
+        self.section("S1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x].")
+        self.assertEqual(vc.section_order(self.run), ["s2", "g1", "s1", "s9", "x1"])
+        text = self.assemble()
+        self.assertEqual(text.count("## Bir"), 1)
+        self.assertLess(text.index("## Boşluk"), text.index("## Bir"))
+        self.assertNotIn("s1.md", self.err)
+        self.assertRegex(self.out, r"report\.md: 4 sections")
+
+    def test_assemble_title_never_holds_a_url(self):
+        self.page("https://c.org/z", "https://doi.org/10.1/abc\nGamma Journal 2019\nDeğer 7,5 ölçüldü.")
+        self.section("s9", "## Dokuz\n\nDeğer 7,5 [https://c.org/z].")
+        text = self.assemble()
+        self.assertIn("\n[3] Gamma Journal 2019 https://c.org/z\n", text)
+        self.assertEqual(vc.parse_report(text)[1][3], "https://c.org/z")
+        kinds = [f["kind"] for f in vc.check(self.run)["flags"]]
+        self.assertNotIn("unverifiable", kinds)
+        self.assertNotIn("number-mismatch", kinds)
+
+    def test_url_with_parentheses_keeps_its_evidence(self):
+        url = "https://tr.wikipedia.org/wiki/Mudanya_(ilçe)"
+        self.page(url, "Mudanya (ilçe)\nNüfus 66.000 kişi.")
+        self.section("s9", f"## Dokuz\n\nNüfus 66.000 [{url}].")
+        text = self.assemble()
+        self.assertEqual(vc.parse_report(text)[1][3], url)
+        kinds = [f["kind"] for f in vc.check(self.run)["flags"]]
+        self.assertNotIn("unverifiable", kinds)
+        self.assertNotIn("number-mismatch", kinds)
+        self.assertEqual(vc.URL_RX.search("(bkz. https://a.org/x).").group(0), "https://a.org/x")
+
+    def test_assemble_warns_without_top_and_end(self):
+        for sid in ("_top", "_end"):
+            (self.run / "sections" / f"{sid}.md").unlink()
+        text = self.assemble()
+        self.assertEqual(self.code, 0)
+        self.assertIn("_top.md", self.err)
+        self.assertIn("_end.md", self.err)
+        self.assertIn(vc.END_MARK + "\n\n" + vc.SOURCES_MARK, text)
 
     def test_assemble_then_check_roundtrip(self):
         self.assemble()

@@ -26,7 +26,7 @@ urlopen, sleep = urllib.request.urlopen, time.sleep  # tests monkeypatch these
 HOSTS = {}  # host -> Semaphore(2)
 
 BOMS = ((codecs.BOM_UTF8, "utf-8-sig"), (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
-URL_RX = re.compile(r"https?://[^\s<>()\[\]\"“”'«»]+|file:///[^\s<>()\[\]\"“”'«»]+")
+URL_RX = re.compile(r"(?:https?://|file:///)(?:[^\s<>()\[\]\"“”'«»]|\([^\s<>()\[\]\"“”'«»]*\))+")  # (…) in pairs
 CITE = re.compile(r"\[(\d+(?:\s*[-–—]\s*\d+)?(?:\s*[,;]\s*\d+(?:\s*[-–—]\s*\d+)?)*)\]")
 NUM = re.compile(r"(?<![\w.,])(?P<neg>[-−](?=\d))?"
                  r"(?P<n>\d{1,3}(?:[.,\u00a0\u202f\u2009 ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)(?!\d)")
@@ -243,8 +243,8 @@ def snap_head(path: Path) -> tuple:
     head, _, body = (text := read_text(path).replace("\r\n", "\n")).partition("\n\n")
     return (dict(ln.partition(": ")[::2] for ln in head.splitlines()), body) if text.startswith("URL:") else ({}, text)
 
-def first_line(body: str) -> str:
-    return next((squash(ln)[:120] for ln in body.splitlines() if ln.strip()), "")
+def first_line(body: str) -> str:  # a title: the first line with text besides URLs
+    return next((t[:120].rstrip() for ln in body.splitlines() if (t := squash(URL_RX.sub(" ", ln)))), "")
 def page_status(body: str) -> str:
     """`empty` under 200 body characters, `boilerplate` under 400 content characters (40+ character lines, table rows)."""
     rows = [s for s in map(str.strip, body.splitlines()) if len(s) >= 40 or len(re.split(r"\||\t", s.strip("|"))) > 1]
@@ -781,7 +781,7 @@ def section_order(run: Path) -> list:
     """Section ids in plan.md heading order, then other sections/*.md (not _top/_end) by name."""
     plan = read_text(run / "plan.md").splitlines() if (run / "plan.md").is_file() else []
     ids = list(dict.fromkeys(m.group(1).lower() for line in plan if (m := PLAN_ID.match(line))))
-    return ids + sorted(p.stem for p in (run / "sections").glob("*.md") if p.stem not in ("_top", "_end", *ids))
+    return ids + sorted(p.stem for p in (run / "sections").glob("*.md") if p.stem.lower() not in ("_top", "_end", *ids))
 
 def cmd_assemble(run: Path, title: str = "Sources") -> int:
     """Join the drafts into report.md; `[URL]` citations become `[n]`; sources follow SOURCES_MARK."""
@@ -789,16 +789,16 @@ def cmd_assemble(run: Path, title: str = "Sources") -> int:
     if not secs.is_dir():
         print(f"error: sections folder missing: {secs}", file=sys.stderr)
         return 2
-    def part(sid):
-        if (secs / f"{sid}.md").is_file():
-            return read_text(secs / f"{sid}.md").replace("\r\n", "\n").strip()
+    files = {p.stem.lower(): p for p in secs.glob("*.md") if p.is_file()}  # an id names its draft in any case
+    def part(sid):  # a draft without marker lines: assemble writes each marker once
+        if path := files.get(sid.lower()):
+            return "\n".join(s for s in read_text(path).splitlines() if s.strip() not in (END_MARK, SOURCES_MARK)).strip()
         print(f"warning: sections/{sid}.md missing", file=sys.stderr)
     drafts = [t for t in map(part, section_order(run)) if t is not None]
     body = URL_CITE.sub(renumber, "\n\n".join(t for t in [part("_top"), *drafts] if t))
     end, snaps = URL_CITE.sub(renumber, part("_end") or ""), load_snapshots(run)
-    entries = [" ".join(filter(None, (f"[{n}]", first_line(snaps.get(norm_url(u), "")), u)))
-               for n, u in enumerate(urls, 1)]
-    blocks = [body, END_MARK + ("\n" + end if end else ""), "\n".join([SOURCES_MARK, f"## {title}", "", *entries])]
+    refs = [" ".join(filter(None, (f"[{n}]", first_line(snaps.get(norm_url(u), "")), u))) for n, u in enumerate(urls, 1)]
+    blocks = [body, END_MARK + ("\n" + end if end else ""), "\n".join([SOURCES_MARK, f"## {title}", "", *refs])]
     write_text(run / "report.md", "\n\n".join(blocks) + "\n")
     print(f"report.md: {len(drafts)} sections, {len(body.split())} body words, {len(urls)} sources")
     return 0
