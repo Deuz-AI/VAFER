@@ -10,7 +10,7 @@ Usage:
 
 Stdlib only; only `fetch` uses the network. `check` is advisory (exit 0) but exits 2 when report.md or the section
 draft is missing; `check --section` writes nothing. `assemble` exits 2 without sections/. `diff` exits 1 when an edit
-lost or changed a number, citation, quote or source entry, or detached a citation; additions alone pass.
+lost or changed a number, citation, quote, source entry or marker line, or detached a citation; additions alone pass.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ urlopen, sleep = urllib.request.urlopen, time.sleep  # tests monkeypatch these
 HOSTS = {}  # host -> Semaphore(2)
 
 BOMS = ((codecs.BOM_UTF8, "utf-8-sig"), (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
-URL_RX = re.compile(r"(?:https?://|file:///)(?:[^\s<>()\[\]\"“”'«»]|\([^\s<>()\[\]\"“”'«»]*\))+")  # (…) in pairs
+URL_RX = re.compile(r"(?:https?://|file:///)(?:[^\s<>()\[\]\"“”'«»]|'(?=\w)|\([^\s<>()\[\]\"“”'«»]*\))+")  # (…) in pairs
 CITE = re.compile(r"\[(\d+(?:\s*[-–—]\s*\d+)?(?:\s*[,;]\s*\d+(?:\s*[-–—]\s*\d+)?)*)\]")
 NUM = re.compile(r"(?<![\w.,])(?P<neg>[-−](?=\d))?"
                  r"(?P<n>\d{1,3}(?:[.,\u00a0\u202f\u2009 ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)(?!\d)")
@@ -34,23 +34,24 @@ OPS = re.compile(r"[×*·/÷+−]|(?<![^\W\d_])x(?![^\W\d_])|(?<!\S)-(?!\S)")
 OPMAP = {"×": "*", "*": "*", "·": "*", "x": "*", "/": "/", "÷": "/", "+": "+", "−": "-", "-": "-"}
 QUOTE_RX = re.compile(r'"([^"\n]+)"|“([^”\n]+)”|«([^»\n]+)»|„([^“”\n]+)[“”]')
 RECEIPT = re.compile(r'^\s*[-*+]\s+(?P<fact>.*?)["“„](?P<span>.+)["”“]\s*<?(?P<url>(?:https?:|file:/)//[^\s<>]+)>?')
-URL_CITE = re.compile(r"\[((?:https?|file):[^\]\s,;]+(?:\s*[,;]\s*(?:https?|file):[^\]\s,;]+)*)\]")  # sections/<id>.md
+URL_CITE = re.compile(r"\[((?:https?|file):[^\]\s]+(?:\s*[,;]\s*(?:https?|file):[^\]\s]+)*)\]")  # sections/<id>.md
 MONTHS = ("ocak şubat mart nisan mayıs haziran temmuz ağustos eylül ekim kasım aralık january february march april "
           "may june july august september october november december").split()
 MON = "|".join(MONTHS)
 ORDS = ("first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth "
         "fifteenth sixteenth seventeenth eighteenth nineteenth twentieth twenty-first").split()
-# one-token figures: ISO, dotted and written (also yearless) dates; Roman or ordinal centuries; clock times (`special`)
-SPECIAL = re.compile(r"(?<![\w.,:])(?:(?P<iy>\d{4})-(?P<im>\d{1,2})-(?P<id>\d{1,2})"
+OM, ORD = r"(?:\.|st|nd|rd|th)", "|".join(ORDS[::-1])  # an ordinal mark; ordinal words, longest first
+# one-token figures: ISO, dotted and written (also yearless) dates; Roman, ordinal (never cardinal) centuries; clock
+# times (`special`). A range head (`d0`, `c0`: "17–18 Ağustos", "16.–19. yüzyıl") gives the token a key per end.
+SPECIAL = re.compile(r"(?i)(?<![\w.,:%])(?:(?P<iy>\d{4})-(?P<im>\d{1,2})-(?P<id>\d{1,2})"
                      r"|(?P<dd>\d{1,2})[./](?P<dm>\d{1,2})[./](?P<dy>\d{4})"
-                     rf"|(?P<td>\d{{1,2}})(?:\.|st|nd|rd|th)?\s+(?:of\s+)?(?P<tm>{MON})(?![^\W\d_])(?:,?\s+(?P<ty>\d{{4}}))?"
-                     rf"|(?P<em>{MON})\s+(?P<ed>\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s+(?P<ey>\d{{4}}))?"
-                     rf"|(?P<c>\d{{1,2}}|[IVXLC]{{1,6}}|{'|'.join(ORDS[::-1])})(?:\.|st|nd|rd|th)?[\s-]*"
-                     r"(?:yüzyıl|yy\b|century|centuries)"
-                     r"|(?P<h>[01]?\d|2[0-3])(?P<sep>[:.])(?P<mi>[0-5]\d))(?!\d)", re.I)
+                     rf"|(?:(?P<d0>\d{{1,2}}){OM}?\s*[-–—]\s*)?(?P<td>\d{{1,2}}){OM}?\s+(?:of\s+)?(?P<tm>{MON})(?![^\W\d_])"
+                     rf"(?:,?\s+(?P<ty>\d{{4}}))?|(?P<em>{MON})\s+(?P<ed>\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s+(?P<ey>\d{{4}}))?"
+                     rf"|(?:(?P<c0>\d{{1,2}}|[IVXLC]{{1,6}}|{ORD}){OM}?\s*[-–—]\s*)?(?P<c>\d{{1,2}}(?={OM})|[IVXLC]{{1,6}}|{ORD})"
+                     rf"{OM}?[\s-]*(?:yüzyıl|yy\b|century|centuries)|(?P<h>[01]?\d|2[0-3])(?P<sep>[:.])(?P<mi>[0-5]\d))(?!\d)")
 SEVERITY = {"equation-wrong": "high", "b-unopened": "high", "dangling": "high", "quote-missing": "high",
-            "lead-only": "medium", "number-mismatch": "medium", "uncited": "medium", "unverifiable": "medium",
-            "label-leak": "medium"}  # every other kind is low
+            "marker-missing": "high", "lead-only": "medium", "number-mismatch": "medium", "uncited": "medium",
+            "unverifiable": "medium", "label-leak": "medium"}  # every other kind is low
 HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 SOURCES_MARK, END_MARK = "<!-- vafer:sources -->", "<!-- vafer:end -->"
 PLAN_ID = re.compile(r"^#{2,4}\s+([A-Za-z]{1,3}\d{1,2})\b")  # a plan.md heading's section id
@@ -63,8 +64,7 @@ LABELS = {"primary": "primary", "official": "official", "scholarly": "scholarly"
 MIX = ("primary", "official", "scholarly", "press", "lead", "unlabelled")
 LEAD_DOMAINS = ("wikipedia.org", "wikiwand.com", "quora.com", "reddit.com", "medium.com", "blogspot.com",
                 "wordpress.com", "eksisozluk.com", "fandom.com", "news.google.com", "msn.com", "yahoo.com")
-DATE_LINE = re.compile(r"^[\s>*_-]*(?:Tarih|Date|As of|Güncel(?:leme)?|Last updated|Updated|Erişim(?: tarihi)?)"
-                       r"[*_]*[ \t]*:", re.I)
+JUNK = re.compile(r"^\W*(?:(?:skip|jump) to\b|search\b|(?:e-?)?(?:issn|isbn)\b)|:$|\|.*\||^[\W\d]*$", re.I)  # no title
 LIST_MARK = re.compile(r"^\s*(?:\d+[.)]|[-*+]|>)\s+")
 # sentence end: mark plus footnote markers (.³ .[^3]) before space + capital; never a period before a digit
 SENT_END = re.compile(r"[.!?…](?:[⁰¹²³⁴-⁹]+|\[\^\d+\])*(?=\s+[\[(“\"«„A-ZÇĞİÖŞÜÂÎÛΑ-ΩА-Я])|[!?…](?=\s+\d)")
@@ -86,20 +86,16 @@ Num = namedtuple("Num", "start end text cands")
 
 def setup_console() -> None:
     """Force UTF-8 on stdout/stderr (Windows consoles default to a legacy code page)."""
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
+    for stream in (s for s in (sys.stdout, sys.stderr) if hasattr(s, "reconfigure")):
+        stream.reconfigure(encoding="utf-8", errors="replace")
 
 def decode_bytes(data: bytes, hints=()) -> tuple:
     """Decode by BOM, then the hinted charsets, then UTF-8, then windows-1254."""
     bom = next((enc for mark, enc in BOMS if data.startswith(mark)), None)
     for enc in filter(None, [bom, *hints, "utf-8"]):
-        try:
+        with contextlib.suppress(LookupError, UnicodeDecodeError):
             return data.decode(enc).lstrip("\ufeff"), enc
-        except (LookupError, UnicodeDecodeError):
-            continue
     return data.decode("cp1254", errors="replace"), "windows-1254"
-
 def read_text(path) -> str:
     """Read a local text file, honouring UTF-8/UTF-16 BOMs."""
     return decode_bytes(Path(path).read_bytes())[0]
@@ -110,25 +106,28 @@ def squash(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 def norm_url(url: str) -> str:
-    """Normalize a URL: no scheme, www., fragment, trailing slash or utm_* params."""
+    """Normalize a URL: no scheme, www., fragment, trailing slash, utm_* params or %-escapes."""
     parts = urllib.parse.urlsplit(url.strip().rstrip(".,;:"))
     query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
              if not k.lower().startswith("utm_")]
     host = parts.netloc.lower().removeprefix("www.")
-    return host + parts.path.rstrip("/") + ("?" + urllib.parse.urlencode(query) if query else "")
+    return host + urllib.parse.unquote(parts.path).rstrip("/") + ("?" + urllib.parse.urlencode(query) if query else "")
 
 class _HTMLText(html.parser.HTMLParser):
-    """HTML to plain text: blocks on their own lines, table rows as `a | b | c`."""
+    """HTML to plain text: blocks on their own lines, table rows as `a | b | c`. `meta` keeps each <meta> content by
+    name or property, and the text of the first <title> before <body> as "<title>" (`lasttag` is the open tag)."""
     SKIP = {"script", "style", "nav", "noscript", "template", "svg", "head"}
-    BLOCK = {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "header",
-             "footer", "ul", "ol", "table", "blockquote", "pre", "dt", "dd", "main", "aside", "figure",
-             "figcaption", "form", "hr", "title", "caption"}
+    BLOCK = set("p div br li h1 h2 h3 h4 h5 h6 section article header footer ul ol table blockquote pre dt dd main aside "
+                "figure figcaption form hr title caption".split())
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.lines, self.buf, self.skip, self.row, self.cell = [], [], 0, None, None
+        self.lines, self.buf, self.skip, self.row, self.cell, self.meta = [], [], 0, None, None, {}
     def handle_starttag(self, tag, attrs):
+        if tag == "meta" and (a := dict(attrs)).get("content"):
+            self.meta.setdefault((a.get("name") or a.get("property") or "").lower(), a["content"])
         if tag == "body":
             self.skip = 0
+            self.meta.setdefault("<title>", "")  # a <title> in the body labels an svg icon
         if tag in self.SKIP:
             self.skip += 1
         elif self.skip:
@@ -157,6 +156,8 @@ class _HTMLText(html.parser.HTMLParser):
         elif tag in self.BLOCK and self.cell is None:
             self.flush()
     def handle_data(self, data):
+        if self.lasttag == "title" and "<title>" not in self.meta:
+            self.meta["<title>"] = data
         if not self.skip:
             (self.cell if self.cell is not None else self.buf).append(data)
     def close_cell(self):
@@ -177,10 +178,10 @@ class _HTMLText(html.parser.HTMLParser):
         self.end_row()
         self.flush()
         return "\n".join(self.lines)
-
-def html_to_text(markup: str) -> str:
+def html_to_text(markup: str) -> tuple:
+    """(text, title): the title is the citation_title or og:title meta, else the first <title>, else ''."""
     (parser := _HTMLText()).feed(markup)
-    return parser.text()
+    return parser.text(), squash(next(filter(None, map(parser.meta.get, ("citation_title", "og:title", "<title>"))), ""))
 
 def pdf_text(raw: bytes, layout: bool = False) -> str | None:
     """Run pdftotext in reading order (or with `-layout`); None when it is unavailable or fails."""
@@ -189,21 +190,20 @@ def pdf_text(raw: bytes, layout: bool = False) -> str | None:
     with tempfile.TemporaryDirectory() as tmp:
         src, out = Path(tmp) / "in.pdf", Path(tmp) / "out.txt"
         src.write_bytes(raw)
-        try:
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
             subprocess.run([exe, *["-layout"][:layout], "-enc", "UTF-8", str(src), str(out)], check=True,
                            capture_output=True, timeout=120)
             return read_text(out)
-        except (OSError, subprocess.SubprocessError):
-            return None
+    return None
 
 def download(url: str):
-    """(raw, content_type, header_charset), or raise RuntimeError(reason). At most 2 at a time per host; a 403
-    retries with a plain agent; 429/503 wait Retry-After (at most 10 s), else 2 s then 5 s."""
-    agents, waits = [BROWSER_UA, PLAIN_UA], [2, 5]
+    """(raw, content_type, header_charset), or raise RuntimeError(reason). At most 2 at a time per host and process;
+    a 403 retries with a plain agent; 429/503 wait Retry-After (at most 10 s), else 2 s then 5 s. Non-ASCII is escaped."""
+    agents, waits, ascii_url = [BROWSER_UA, PLAIN_UA], [2, 5], urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=%~")
     with HOSTS.setdefault(urllib.parse.urlsplit(url).hostname or "", threading.Semaphore(2)):
         while True:
             try:
-                with urlopen(urllib.request.Request(url, headers={"User-Agent": agents[0], "Accept": "*/*"}), timeout=20) as resp:
+                with urlopen(urllib.request.Request(ascii_url, headers={"User-Agent": agents[0], "Accept": "*/*"}), timeout=20) as resp:
                     return resp.read(), resp.headers.get_content_type(), resp.headers.get_content_charset()
             except urllib.error.HTTPError as exc:
                 after = str((exc.headers or {}).get("Retry-After") or "").strip()
@@ -219,32 +219,44 @@ def download(url: str):
 
 @contextlib.contextmanager
 def locked(lock: Path):
-    """Hold `lock` (exclusive create), so one fetcher, thread or process, works on a URL at a time; after 120 s of
-    waiting the lock counts as stale."""
-    start = time.time()
-    while time.time() - start < 120:
+    """Hold `lock` (exclusive create), so one fetcher, thread or process, works on a URL at a time. A lock older
+    than 150 s was left by a killed fetch and is broken; only a lock this call created is removed."""
+    mine, start = False, time.time()
+    while time.time() - start < 300:
         with contextlib.suppress(FileExistsError, PermissionError):
             os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            mine = True
             break
+        with contextlib.suppress(OSError):
+            if time.time() - lock.stat().st_mtime > 150:
+                lock.unlink()
         time.sleep(0.05)
     try:
         yield
     finally:
-        lock.unlink(missing_ok=True)
-
+        if mine:
+            lock.unlink(missing_ok=True)
 def save(path: Path, data) -> None:
-    """Write whole to a temp file, then move it into place."""
-    tmp = path.with_name(path.name + ".tmp")
+    """Write whole to this writer's own temp file, then move it into place (retried while Windows holds it open)."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_bytes(data) if isinstance(data, bytes) else write_text(tmp, data)
+    for wait in (0.2, 0.5, 1, 2):
+        with contextlib.suppress(PermissionError):
+            return os.replace(tmp, path)
+        time.sleep(wait)
     os.replace(tmp, path)
 
 def snap_head(path: Path) -> tuple:
     """(header dict, body) of a snapshot file; an empty header when it has none."""
     head, _, body = (text := read_text(path).replace("\r\n", "\n")).partition("\n\n")
     return (dict(ln.partition(": ")[::2] for ln in head.splitlines()), body) if text.startswith("URL:") else ({}, text)
-
-def first_line(body: str) -> str:  # a title: the first line with text besides URLs
-    return next((t[:120].rstrip() for ln in body.splitlines() if (t := squash(URL_RX.sub(" ", ln)))), "")
+def first_line(body: str) -> str:  # a title: the first 20+ character line, URLs removed, that JUNK does not match
+    return next((t[:120].rstrip() for ln in body.splitlines()
+                 if len(t := squash(URL_RX.sub(" ", ln))) >= 20 and not JUNK.search(t)), "")
+def ok_snapshot(path: Path):  # (status, file, chars, title) of an ok snapshot at `path`, else None
+    with contextlib.suppress(OSError):  # Windows refuses to open a file that is being replaced
+        if path.exists() and (old := snap_head(path))[0].get("Status") == "ok":
+            return "ok", path.name, len(old[1]), old[0].get("Title") or first_line(old[1])
 def page_status(body: str) -> str:
     """`empty` under 200 body characters, `boilerplate` under 400 content characters (40+ character lines, table rows)."""
     rows = [s for s in map(str.strip, body.splitlines()) if len(s) >= 40 or len(re.split(r"\||\t", s.strip("|"))) > 1]
@@ -252,10 +264,12 @@ def page_status(body: str) -> str:
 
 def fetch_one(url: str, pages: Path) -> tuple:
     """Fetch one URL into pages/ unless it has an ok snapshot; return (status, file, chars, title)."""
-    path = pages / (hashlib.sha1(norm_url(url).encode("utf-8")).hexdigest()[:12] + ".txt")
+    path, title = pages / (hashlib.sha1(norm_url(url).encode("utf-8")).hexdigest()[:12] + ".txt"), ""
+    if hit := ok_snapshot(path):  # before the lock too, so a held or stale lock never delays a finished page
+        return hit
     with locked(path.with_suffix(".lock")):
-        if path.exists() and (old := snap_head(path))[0].get("Status") == "ok":
-            return "ok", path.name, len(old[1]), first_line(old[1])
+        if hit := ok_snapshot(path):
+            return hit
         try:
             raw, ctype, header_cs = download(url)
         except RuntimeError as exc:
@@ -263,7 +277,7 @@ def fetch_one(url: str, pages: Path) -> tuple:
         if raw.startswith(OLE_MAGIC) or ctype == "application/msword":
             return "doc-binary", "-", 0, ""
         if ctype == "application/pdf" or raw.lstrip()[:4] == b"%PDF":
-            if (text := pdf_text(raw)) is None:  # left for the host's PDF reader
+            if (text := pdf_text(raw)) is None or page_status(text) != "ok":  # scanned: left for the host's PDF reader
                 save(path.with_suffix(".pdf"), raw)
                 return "pdf-saved", path.with_suffix(".pdf").name, len(raw), ""
             if layout := pdf_text(raw, layout=True):
@@ -273,12 +287,12 @@ def fetch_one(url: str, pages: Path) -> tuple:
             meta = re.search(rb"<meta[^>]+charset=[\"']?\s*([\w.:-]+)", raw[:8192], re.I)
             text, charset = decode_bytes(raw, [header_cs, meta and meta.group(1).decode("ascii", "ignore")])
             if "html" in ctype or re.search(r"<(html|body|p|div|table)\b", text[:4096], re.I):
-                text = html_to_text(text)
+                text, title = html_to_text(text)
         body = text.replace("\r\n", "\n")
-        status, stamp = page_status(body), dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-        save(path, f"URL: {url}\nFetched: {stamp}\nStatus: {status}\nCharset: {charset}\n"
-                   f"SHA256: {hashlib.sha256(raw).hexdigest()}\n\n{body}")
-        return status, path.name, len(body), first_line(body)
+        status, title = page_status(body), title[:120].rstrip() or first_line(body)
+        save(path, f"URL: {url}\nFetched: {dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')}\n"
+                   f"Status: {status}\nCharset: {charset}\nSHA256: {hashlib.sha256(raw).hexdigest()}\nTitle: {title}\n\n{body}")
+        return status, path.name, len(body), title
 
 def passages(text: str, terms: list[str], limit: int = 3, max_chars: int = 1500) -> list[str]:
     """Line-numbered windows (±2 lines) around the lines that hit the most terms after Turkish case folding, best
@@ -293,100 +307,98 @@ def passages(text: str, terms: list[str], limit: int = 3, max_chars: int = 1500)
                               if lines[n].strip())[:room]
             out, room, taken = out + [block], room - len(block), taken + [(lo, hi)]
     return out
-
-def show(body: str, terms: str) -> list:
-    """Print the passages of one snapshot body, indented; return them."""
-    for block in (found := passages(body, terms.split("|"))):
-        print("  " + block.replace("\n", "\n  "))
+def show(body: str, terms: str, head: str = "") -> list:
+    """Print the passages of one snapshot body, indented, after `head` when there are any; return them."""
+    if found := passages(body, terms.split("|")):
+        print(*([head] if head else []), *("  " + block.replace("\n", "\n  ") for block in found), sep="\n")
     return found
 
 def cmd_fetch(run: Path, urls, find: str | None = None) -> int:
     """Fetch in parallel (8 workers); print `<status> <file> <chars> <title>` per URL, and passages with --find."""
-    pages = run / "pages"
-    pages.mkdir(parents=True, exist_ok=True)
+    (pages := run / "pages").mkdir(parents=True, exist_ok=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        for res in list(pool.map(lambda url: fetch_one(url, pages), urls)):
+        for job in [pool.submit(fetch_one, url, pages) for url in urls]:  # one failure stays on its own line
+            res = (f"error:{type(job.exception()).__name__}", "-", 0, "") if job.exception() else job.result()
             print(" ".join(map(str, res)).strip())
             if find and res[0] == "ok":
                 show(snap_head(pages / res[1])[1], find)
     return 0
-
 def cmd_find(run: Path, terms: str, urls=()) -> int:
-    """Print passages over the existing ok snapshots: all of them, or only those of `urls`."""
-    want = {norm_url(u) for u in urls}
-    for key, text in load_snapshots(run).items():
-        if not want or key in want:
-            print(key)
-            show(text, terms) or print("  (no hit)")
+    """Print passages over the existing ok snapshots (all, or those of `urls`) under each page's URL; then count the
+    pages without hits and list the URLs without a snapshot."""
+    want, snaps = {norm_url(u): u for u in urls}, load_snapshots(run, heads := {})
+    misses = sum(not show(text, terms, heads[key][0]["URL"]) for key, text in snaps.items() if not want or key in want)
+    gone = [u for key, u in want.items() if key not in snaps]
+    print(f"{plural(misses, 'page')} without hits; {plural(len(gone), 'URL')} without a snapshot"
+          + (": " + " ".join(gone) if gone else ""))
     return 0
 
 def parse_number(token: str, negative=False) -> list:
-    """Candidate (value, decimals) readings of a number token; ambiguous ones yield two."""
+    """Candidate (value, decimals) readings of a number token; ambiguous ones yield two, mixed-up ones none."""
     t = re.sub(r"[\s\u00a0\u202f\u2009]", "", token)
-    if "." in t and "," in t:
-        dec = "." if t.rfind(".") > t.rfind(",") else ","
-        t = t.replace("," if dec == "." else ".", "").replace(dec, ".")
-        cands = [(Decimal(t), len(t.split(".")[1]))]
-    else:
-        cands = [(Decimal(t), 0)] if t.isdigit() else []
-        for sep in ".,":
-            if sep not in t:
-                continue
-            if t.count(sep) > 1:
-                cands = [(Decimal(t.replace(sep, "")), 0)]
-                break
-            whole, frac = t.split(sep)
-            cands = [(Decimal(f"{whole}.{frac}"), len(frac))]
-            if len(frac) == 3 and 1 <= len(whole) <= 3 and whole != "0":
-                cands.append((Decimal(whole + frac), 0))
-    return [(-v if negative else v, d) for v, d in cands]
-
+    with contextlib.suppress(InvalidOperation):  # 1,234.567,8 has no reading
+        if "." in t and "," in t:
+            dec = "." if t.rfind(".") > t.rfind(",") else ","
+            t = t.replace("," if dec == "." else ".", "").replace(dec, ".")
+            cands = [(Decimal(t), len(t.split(".")[1]))]
+        else:
+            cands = [(Decimal(t), 0)] if t.isdigit() else []
+            for sep in ".,":
+                if sep not in t:
+                    continue
+                if t.count(sep) > 1:
+                    cands = [(Decimal(t.replace(sep, "")), 0)]
+                    break
+                whole, frac = t.split(sep)
+                cands = [(Decimal(f"{whole}.{frac}"), len(frac))]
+                if len(frac) == 3 and 1 <= len(whole) <= 3 and whole != "0":
+                    cands.append((Decimal(whole + frac), 0))
+        return [(-v if negative else v, d) for v, d in cands]
+    return []
 def mask(text: str) -> str:
     """Blank out citation markers and URLs so their digits are never read as numbers."""
     for rx in (URL_RX, CITE):
         text = rx.sub(lambda m: " " * len(m.group(0)), text)
     return text
-
 def spelled(m) -> list:
     """Readings of a written-out number: `4 bin 472`, `bin 550`, `12,3 milyon`, `1.2 million`, `yüz bin`."""
     exp, tail = SCALE.get(m.group("m").replace("İ", "i").replace("I", "ı").lower().replace("ı", "i"), 0), int(m.group("tail") or 0)
     base = parse_number(m.group("n")) if m.group("n") else [(Decimal(100 if m.group("yuz") else 1), 0)]
     return [(v.scaleb(exp) + tail, d - exp if d and not tail else 0) for v, d in base]
-
 def roman(s: str) -> int:
     vals = [{"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}[c] for c in s.upper()]
     return sum(-v if i + 1 < len(vals) and v < vals[i + 1] else v for i, v in enumerate(vals))
-def special(m, text: str):
-    """Key of a one-token figure ("date 1923-10-29", yearless "date --10-29", "century 16", "time 3:02") or None."""
+def special(m, text: str) -> list:
+    """Keys of a one-token figure ("date 1923-10-29", "date --10-29", "century 16", "time 3:02"), one per range end."""
     g = m.groupdict()
     if g["c"]:
-        c = g["c"].lower()
-        n = int(c) if c.isdigit() else ORDS.index(c) + 1 if c in ORDS else roman(c)
-        return f"century {n}" if 0 < n <= 21 else None
-    if g["h"]:  # a dotted time needs "saat"/"at" before it or a suffix/am/pm after it
-        ok = (g["sep"] == ":" or re.search(r"\b(?:saat|at)\s*$", text[:m.start()], re.I)
-              or re.match(r"['’]?[dt][ae]\b|\s*[ap]\.?m\b", text[m.end():], re.I))
-        return f"time {int(g['h'])}:{g['mi']}" if ok else None
-    y, mo, d = next((g[a], g[b], g[c]) for a, b, c in (("iy", "im", "id"), ("dy", "dm", "dd"), ("ty", "tm", "td"),
-                                                        ("ey", "em", "ed")) if g[b])
+        ns = [int(c) if c.isdigit() else ORDS.index(c) + 1 if c in ORDS else roman(c)
+              for c in (x.lower() for x in (g["c0"], g["c"]) if x)]
+        return [f"century {n}" for n in ns if 0 < n <= 21]
+    if g["h"]:  # a dotted time needs "saat" before it, or a 'de/'te suffix or am/pm after it ("at 3.45" is a decimal)
+        ok = (g["sep"] == ":" or re.search(r"\bsaat\s*$", text[:m.start()], re.I)
+              or re.match(r"['’][dt][ae]\b|\s*[ap]\.?m\b", text[m.end():], re.I))
+        return [f"time {int(g['h'])}:{g['mi']}"] if ok else []
+    y, mo, *ds = next((g[a], g[b], *map(g.get, c)) for a, b, *c in (("iy", "im", "id"), ("dy", "dm", "dd"),
+                                                                     ("ty", "tm", "d0", "td"), ("ey", "em", "ed")) if g[b])
     cap = y or mo[0].isupper()  # a yearless date needs a capital month: "5 may" is a verb
     mo = int(mo) if mo.isdigit() else [tr_fold(x) for x in MONTHS].index(tr_fold(mo)) % 12 + 1
-    return f"date {y or '-'}-{mo:02}-{int(d):02}" if cap and 1 <= mo <= 12 and 1 <= int(d) <= 31 else None
+    return [f"date {y or '-'}-{mo:02}-{int(d):02}" for d in ds if d and cap and 1 <= mo <= 12 and 1 <= int(d) <= 31]
 
 def numbers(text: str, masked=False) -> list:
     """All number tokens in text (citations and URLs excluded): one-token dates, centuries and times, written-out
     scales, then plain numbers."""
     text, out = (text if masked else mask(text)), []
     for m in SPECIAL.finditer(text):
-        if key := special(m, text):
-            out.append(Num(m.start(), m.end(), m.group(0), [(key, 0)]))
+        if keys := special(m, text):
+            out.append(Num(m.start(), m.end(), m.group(0), [(k, 0) for k in keys]))
             text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
     out += [Num(m.start(), m.end(), m.group(0), spelled(m)) for m in SPELL.finditer(text)
             if m.group("n") or m.group("yuz") or m.group("tail")]
     spans = [(n.start, n.end) for n in out]
     out += [Num(m.start(), m.end(), m.group(0), parse_number(m.group("n"), bool(m.group("neg"))))
             for m in NUM.finditer(text) if not any(s <= m.start() < e for s, e in spans)]
-    return sorted(out, key=lambda n: n.start)
+    return sorted((n for n in out if n.cands), key=lambda n: n.start)
 
 def rounds_to(src, value, places: int) -> bool:
     if not isinstance(src, Decimal) or not isinstance(value, Decimal):
@@ -397,12 +409,12 @@ def rounds_to(src, value, places: int) -> bool:
 def date_parts(key) -> set:  # "date 1923-10-29" -> {"date --10-29", 1923}; empty for any other reading
     return {"date -" + key[9:], Decimal(key[5:9])} if re.match(r"date \d", str(key)) else set()
 def num_matches(num: Num, pool) -> bool:
-    """A reading of `num` in `pool`; a full date matches when its yearless key and its year are both there."""
-    if parts := date_parts(num.cands[0][0]):
-        return parts <= {s for s, _ in pool}
-    return any(rounds_to(s, v, d) for v, d in num.cands for s, _ in pool)
-def is_year(num: Num) -> bool:
-    return num.text.isdigit() and len(num.text) == 4 and 1900 <= int(num.text) <= 2100
+    """A reading of `num` (of a range: either end) in `pool`; a full date needs its yearless key and its year there."""
+    return any(p <= {s for s, _ in pool} if (p := date_parts(v)) else any(rounds_to(s, v, d) for s, _ in pool)
+               for v, d in num.cands)
+def is_year(num: Num, text: str = "", lo: int = 1900) -> bool:  # 4 digits in lo–2100, or after MÖ/MS/AD, before BC/AD
+    return (num.text.isdigit() and len(num.text) == 4 and lo <= int(num.text) <= 2100 or bool(
+        re.search(r"\b(?:M\.?Ö\.?|M\.?S\.?|AD)\s*$", text[:num.start]) or re.match(r"\s*(?:BCE?|AD)\b", text[num.end:])))
 def is_small_int(num: Num) -> bool:
     return num.text.lstrip("-−").isdigit() and abs(int(num.text.lstrip("-−"))) <= 10
 
@@ -410,26 +422,19 @@ def evaluate(vals, ops):
     """Evaluate with usual precedence (× ÷ before + −)."""
     terms = [vals[0]]
     for op, val in zip(ops, vals[1:]):
-        if op in "*/":
-            terms[-1] = terms[-1] * val if op == "*" else terms[-1] / val
-        else:
-            terms.append(val if op == "+" else -val)
+        terms[-1:] = [terms[-1] * val] if op == "*" else [terms[-1] / val] if op == "/" else [terms[-1], val if op == "+" else -val]
     return sum(terms)
-
 def equation_ok(chain, ops, result) -> tuple:
     """Try every reading of the inputs; return (ok, computed value of the first reading)."""
     first = None
     for combo in itertools.product(*[[v for v, _ in n.cands] for n in chain]):
-        try:
+        with contextlib.suppress(ArithmeticError, InvalidOperation, TypeError):
             got = evaluate(list(combo), ops)
-        except (ArithmeticError, InvalidOperation, TypeError):
-            continue
-        first = got if first is None else first
-        for rv, rd in result.cands:
-            if isinstance(rv, Decimal) and abs(got - rv) <= abs(rv) * Decimal("0.005") or rounds_to(got, rv, rd):
+            first = got if first is None else first
+            if any(isinstance(rv, Decimal) and abs(got - rv) <= abs(rv) * Decimal("0.005") or rounds_to(got, rv, rd)
+                   for rv, rd in result.cands):
                 return True, got
     return False, first
-
 def find_equations(masked: str, nums: list) -> list:
     """Return (inputs, ops, result, eq_pos) for each `=`/`≈` with an operator chain on its left."""
     out, start = [], 0
@@ -440,8 +445,7 @@ def find_equations(masked: str, nums: list) -> list:
             continue
         chain, ops = [left[-1]], []
         for prev in reversed(left[:-1]):
-            found = OPS.findall(masked[prev.end:chain[0].start])
-            if not found:
+            if not (found := OPS.findall(masked[prev.end:chain[0].start])):
                 break
             chain.insert(0, prev)
             ops.insert(0, OPMAP[found[-1]])
@@ -454,7 +458,6 @@ def qnorm(text: str) -> str:
     return squash(unicodedata.normalize("NFC", text).translate(QMAP))
 def tr_fold(text: str) -> str:
     return text.replace("İ", "i").replace("I", "i").replace("ı", "i").casefold()
-
 def quote_status(quote: str, texts) -> str:
     """'exact', 'near' (Turkish-aware case fold) or 'missing'."""
     parts = [p for p in (q.strip(" .,;:") for q in re.split(r"\.\.\.|…|\[\.\.\.\]", qnorm(quote))) if p]
@@ -469,14 +472,11 @@ def expand_cites(inner: str) -> list:
 
 def receipt_label(line: str) -> tuple:
     """(label, unverified) from the last parenthesised field; label None when absent."""
-    groups = re.findall(r"\(([^()]*)\)", line)
-    words = re.findall(r"[^\W\d_]+", groups[-1].lower()) if groups else []
+    words = re.findall(r"[^\W\d_]+", fields[-1].lower()) if (fields := re.findall(r"\(([^()]*)\)", line)) else []
     return next((LABELS[w] for w in words if w in LABELS), None), "unverified" in words
-
 def loose(text: str) -> str:
     """Fold case (Turkish-aware), quotes and dashes; drop whitespace and hyphenation."""
     return re.sub(r"[\s­-]+", "", tr_fold(unicodedata.normalize("NFC", text).translate(QMAP)))
-
 def load_receipts(run: Path, snaps=None) -> tuple:
     """Receipt spans and (label, unverified) pairs from notes/*.md, both keyed by normalized URL, and parse stats.
     Unverified spans, and spans absent from their URL's snapshot, are left out and counted, not flagged."""
@@ -504,14 +504,16 @@ def lead_domain(url: str) -> bool:
     host = (urllib.parse.urlsplit(url.strip()).hostname or "").removeprefix("www.")
     return any(host == d or host.endswith("." + d) for d in LEAD_DOMAINS)
 
-def load_snapshots(run: Path) -> dict:
-    """Ok snapshot texts, each with its PDF `-layout` copy if any, keyed by normalized URL. The status comes from
-    the header, else from a legacy index.tsv; layout copies have no header."""
-    pages, snaps = run / "pages", {}
+def load_snapshots(run: Path, heads: dict | None = None) -> dict:
+    """Ok snapshot texts (with any PDF `-layout` copy) by normalized URL; `heads` gets (header, body) of every snapshot.
+    The status comes from the header, else from a legacy index.tsv; layout copies have no header."""
+    pages, snaps, heads = run / "pages", {}, {} if heads is None else heads
     rows = [ln.split("\t") for ln in read_text(index).splitlines()] if (index := pages / "index.tsv").exists() else []
     failed = {p[1] for p in rows if len(p) >= 3 and p[1] and p[2] != "ok"}  # saved for inspection only
     for path in sorted(pages.glob("*.txt")) if pages.exists() else []:
         head, body = snap_head(path)
+        if "URL" in head:
+            heads.setdefault(norm_url(head["URL"]), (head, body))
         if "URL" in head and head.get("Status", "ok") == "ok" and path.name not in failed:
             lay = path.with_name(path.stem + ".layout.txt")
             snaps.setdefault(norm_url(head["URL"]), body + ("\n\n" + read_text(lay) if lay.exists() else ""))
@@ -525,19 +527,16 @@ def sources_start(lines) -> int | None:
         return marks[-1]
     for i in reversed([i for i, line in enumerate(lines) if HEADING.match(line)]):
         rest = [line for line in lines[i + 1:] if line.strip()]
-        hits = sum(map(is_entry, rest))
-        if hits and 2 * hits >= len(rest):
+        if (hits := sum(map(is_entry, rest))) and 2 * hits >= len(rest):
             return i
     return None
-
 def parse_report(text: str):
     """Return (body lines before END_MARK, sources {n: url}, END block lines up to the sources)."""
     lines = text.splitlines()
     cut = sources_start(lines)
     top, sources = (lines if cut is None else lines[:cut]), {}
     for line in lines[cut + 1:] if cut is not None else []:
-        if is_entry(line):
-            m = SOURCE_ENTRY.match(line)
+        if is_entry(line) and (m := SOURCE_ENTRY.match(line)):
             sources[int(m.group(1) or m.group(3))] = URL_RX.search(line).group(0).rstrip(".,;:")
     end = next((i for i, line in enumerate(top) if line.strip() == END_MARK), None)
     return (top, sources, []) if end is None else (top[:end], sources, top[end + 1:])
@@ -550,17 +549,23 @@ def split_line(line: str) -> list:
         else:
             parts.append(part)
     return [p for p in parts if p.strip()]
-
+def date_line(line: str) -> bool:
+    """`<label>: <date>` in any language: 8 words at most, no citation, a date or year, else only day numbers."""
+    m = re.match(r"[\s>*_-]*[^\W\d][^:]{0,30}:[*_]*(.+)", line)
+    nums = numbers(m.group(1)) if m and len(line.split()) <= 8 and not CITE.search(line) else []
+    big = [str(n.cands[0][0]).startswith("date") or is_year(n, lo=1000) for n in nums]
+    return any(big) and all(b or n.text.isdigit() and int(n.text) <= 31 for b, n in zip(big, nums))
 def groups(lines) -> list:
-    """(first line index, sentences, is_table) per paragraph, list item or table: a citation's borrowing scope.
-    Table rows stay whole; headings, fences, comments, check and date lines are skipped and end a group."""
-    out, fenced, cur = [], False, None
+    """(first line index, sentences, is_table) per paragraph, list item or table: a citation's borrowing scope. Table
+    rows stay whole; headings, fences, comments, check lines and (before the first `## `) date lines end a group."""
+    out, fenced, cur, top = [], False, None, True
     for i, line in enumerate(lines):
+        top = top and not line.startswith("## ")
         if line.lstrip().startswith("```"):
             fenced, cur = not fenced, None
             continue
         if (fenced or HEADING.match(line) or COMMENT.match(line) or CHECK_LINE.search(line) or MIX_LINE.search(line)
-                or DATE_LINE.match(line) or not line.strip()):
+                or top and date_line(line) or not line.strip()):
             cur = None
             continue
         text = LIST_MARK.sub("", line, count=1).strip()
@@ -569,11 +574,9 @@ def groups(lines) -> list:
             out.append(cur := (i, [], table))
         cur[1].extend([text] if table else split_line(text))
     return [g for g in out if g[1]]
-
 def sentences(body_lines) -> list:
     """Body prose split into sentences (see `groups`)."""
     return [s for _, sents, _ in groups(body_lines) for s in sents]
-
 def excerpt(text: str, limit=140) -> str:
     text = squash(text).replace("|", "\\|")
     return text if len(text) <= limit else text[:limit - 1] + "…"
@@ -614,9 +617,9 @@ class Checker:
         urls = [u for u in urls if self.has_evidence(u)]
         found = next((k for k in ("quoted", "page") if any(num_matches(num, self.pool(u, k)) for u in urls)), "missing")
         self.counts[found if urls else "none"] += 1
-        if urls and found == "missing":
+        if urls and found == "missing":  # a year is low, historical too: counts are written 1.500 or 1,500
             self.flag("number-mismatch", sentence, urls, f"{num.text.strip()} not found in cited sources"
-                      + (" (year)" if is_year(num) else ""), "low" if is_year(num) else None)
+                      + " (year)" * (year := is_year(num, sentence, 1000)), "low" if year else None)
     def check_sentence(self, sentence: str, sources: dict, borrowed=()):
         """Check one sentence; without citations of its own it uses `borrowed` (its paragraph's or table's)."""
         masked = mask(sentence)
@@ -631,9 +634,8 @@ class Checker:
             ok, got = equation_ok(chain, ops, result)
             self.eq_ok, self.eq_bad = self.eq_ok + ok, self.eq_bad + (not ok)
             if not ok:
-                self.flag("equation-wrong", sentence, urls,
-                          f"computed {got:f} but report says {result.text.strip()}" if got is not None
-                          else "could not evaluate")
+                self.flag("equation-wrong", sentence, urls, "could not evaluate" if got is None
+                          else f"computed {got:f} but report says {result.text.strip()}")
             for i, num in enumerate(chain):
                 stop = chain[i + 1].start if i + 1 < len(chain) else eq_pos
                 own = [sources[n] for pos, ns in cites if num.end <= pos < stop for n in ns if n in sources]
@@ -653,10 +655,8 @@ class Checker:
             for quote in (next(g for g in m.groups() if g) for m in QUOTE_RX.finditer(sentence) if ev_urls):
                 if len(quote.split()) >= 4 and (status := quote_status(quote, self.texts(ev_urls))) != "exact":
                     self.flag(QUOTE_FLAGS[status][0], sentence, ev_urls, f"“{excerpt(quote, 80)}”: {QUOTE_FLAGS[status][1]}")
-        else:
-            loose_nums = [n.text.strip() for n in rest if not is_year(n) and not is_small_int(n)]
-            if loose_nums:
-                self.flag(uncited, sentence, [], "numbers without citation: " + ", ".join(loose_nums))
+        elif loose_nums := [n.text.strip() for n in rest if not is_year(n) and not is_small_int(n)]:
+            self.flag(uncited, sentence, [], "numbers without citation: " + ", ".join(loose_nums))
         return cited
     def note_cites(self, text: str):
         for n in (n for m in CITE.finditer(text) for n in expand_cites(m.group(1))):
@@ -666,13 +666,12 @@ class Checker:
         for sentence in sents:
             cited = self.check_sentence(sentence, sources, borrowed)
             self.note_cites(sentence)
-            urls = [sources[n] for n in cited if n in sources]
-            if urls and all(self.is_lead(u) for u in urls):
+            if (urls := [sources[n] for n in cited if n in sources]) and all(self.is_lead(u) for u in urls):
                 self.flag("lead-only", sentence, urls, "every cited source is lead-class (wiki, forum, blog, "
                           "aggregator)", "high" if first else None)
     def check_end(self, end, sources):
-        """END block: its first table is checked without the B column (a B cell needs `[n]` or †); the rest
-        (unknowns) only registers citations."""
+        """END block: its first table is checked without the B column's text, but with its citations (a B cell needs
+        `[n]` or †); the rest (unknowns) only registers citations."""
         gs = groups(end)
         table = next((g for g in gs if g[2]), None)
         for sentence in (s for g in gs if g is not table for s in g[1]):
@@ -684,8 +683,9 @@ class Checker:
                 b = cells[2].strip()
                 self.note_cites(b)
                 if b.strip("—–- ") and not CITE.search(b) and "†" not in b:
-                    self.flag("b-unopened", row, [], f"B value `{excerpt(b, 60)}` has no [n] and no † (not opened)")
-                cells[2] = " "
+                    self.flag("b-unopened", row, [], f"B value `{excerpt(b, 60)}` has neither [n] nor †: open its page "
+                              "and cite it, or mark it †")
+                cells[2] = " " + " ".join(m.group(0) for m in CITE.finditer(b)) + " "  # a verdict may take B's value
             rows.append("|" + "|".join(cells) + "|")
         self.check_group(rows, sources)
     def scan(self, body, sources, end=(), cut=0, unused=True):
@@ -693,37 +693,37 @@ class Checker:
         for i, sents, _ in groups(body):
             self.check_group(sents, sources, i < cut)
         self.check_end(end, sources)
-        for n, sentence in self.first_seen.items():
-            if n not in sources:
-                self.flag("dangling", sentence, [], f"[{n}] has no entry in the sources section")
+        for n, sentence in ((n, s) for n, s in self.first_seen.items() if n not in sources):
+            self.flag("dangling", sentence, [], f"[{n}] has no entry in the sources section")
         for n, url in sorted(sources.items()):
             if unused and n not in self.first_seen:
                 self.flag("unused", f"[{n}] {url}", [url], "source entry is never cited in the body")
             if not self.has_evidence(url):
                 self.flag("unverifiable", f"[{n}] {url}", [url], "no page snapshot and no receipt for this URL")
-        for line in (line for line in list(body) + list(end) if not CHECK_LINE.search(line)):
-            for m in LEAK.finditer(line):
-                self.flag("label-leak", line, [], f"internal label `{m.group(0)}` in report body")
+        for line, m in ((ln, m) for ln in [*body, *end] if not CHECK_LINE.search(ln) for m in LEAK.finditer(ln)):
+            self.flag("label-leak", line, [], f"internal label `{m.group(0)}` in report body")
 
 def old_dispositions(path: Path) -> dict:
     """Filled-in dispositions of a previous check.md, keyed by (kind, report excerpt), in row order."""
     old = {}
     for line in read_text(path).splitlines() if path.exists() else []:
         cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
-        if len(cells) >= 7 and re.fullmatch(r"F\d+", cells[0]):
-            if (disp := " | ".join(cells[6:]).strip()).removeprefix("disposition:").strip():
-                old.setdefault((cells[2], cells[3]), []).append(disp)
+        if len(cells) >= 7 and re.fullmatch(r"F\d+", cells[0]) and (
+                disp := " | ".join(cells[6:]).strip()).removeprefix("disposition:").strip():
+            old.setdefault((cells[2], cells[3]), []).append(disp)
     return old
-
 def plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 def check(run: Path) -> dict:
     """Run every check; write check.md and update the Source check line."""
     report_path = run / "report.md"
-    body, sources, end = parse_report(read_text(report_path))
+    body, sources, end = parse_report(text := read_text(report_path))
     checker = Checker(run)
     h2 = [i for i, line in enumerate(body) if line.startswith("## ")]
     checker.scan(body, sources, end, h2[1] if len(h2) > 1 else len(body))  # first section: before the second `## `
+    for k in (END_MARK, SOURCES_MARK):  # an assembled report keeps both marker lines
+        if k not in text and (END_MARK in text or SOURCES_MARK in text or (run / "report.assembled.md").is_file()):
+            checker.flag("marker-missing", f"`{k}`", [], "restore this line: without it the END block and sources are misread")
     flags, c, rs = checker.flags, checker.counts, checker.rstats
     old = old_dispositions(run / "check.md")  # holds filled-in dispositions only
     asked = [f for f in flags if f["severity"] != "low"]
@@ -732,7 +732,7 @@ def check(run: Path) -> dict:
     eqs = f"{plural(checker.eq_ok, 'equation')} correct" + (f", {checker.eq_bad} wrong" if checker.eq_bad else "")
     summary = (f"script — {plural(sum(c.values()), 'figure')}: {c['quoted']} in a quoted receipt, {c['page']} elsewhere "
                f"on the cited page, {c['missing']} not found, {c['none']} without evidence; {eqs}; "
-               f"{open_n} open high/medium flag{'' if open_n == 1 else 's'} of {len(flags)} (check.md)")
+               f"{open_n} open high/medium flag{'' if open_n == 1 else 's'} of {len(asked)} (check.md)")
     cited_urls = {norm_url(sources[n]): sources[n] for n in checker.first_seen if n in sources}
     classes = [checker.source_class(u) for u in cited_urls.values()]
     mix = ", ".join(f"{classes.count(k)} {k}" for k in MIX)
@@ -755,9 +755,8 @@ def check(run: Path) -> dict:
     updated = updated if path == report_path else MIX_LINE.sub(lambda m: m.group("pre") + mix, updated)
     if updated != old_text:
         write_text(path, updated)
-    return {"summary": summary, "mix": mix, "flags": flags, "open": open_n, "counts": dict(c),
-            "figures": sum(c.values()), "matched": c["quoted"] + c["page"], "eq_ok": checker.eq_ok,
-            "eq_bad": checker.eq_bad}
+    return {"summary": summary, "mix": mix, "flags": flags, "open": open_n, "counts": dict(c), "figures": sum(c.values()),
+            "matched": c["quoted"] + c["page"], "eq_ok": checker.eq_ok, "eq_bad": checker.eq_bad}
 
 def check_section(run: Path, sid: str) -> list:
     """Check one researcher draft, sections/<sid>.md, whose citations are `[URL]`; write nothing."""
@@ -765,26 +764,23 @@ def check_section(run: Path, sid: str) -> list:
     body = URL_CITE.sub(numberer({}, urls), read_text(run / "sections" / f"{sid}.md")).splitlines()
     (checker := Checker(run)).scan(body, dict(enumerate(urls, 1)), unused=False)
     return checker.flags
-
 def numberer(nums: dict, urls: list):
     """A URL_CITE callback: `[URL, URL]` becomes `[n, m]`, numbering new URLs (by norm_url) in order of first use."""
-    def renumber(m):
-        keys = [(norm_url(u), u.rstrip(".,;:")) for u in re.split(r"\s*[,;]\s*", m.group(1))]
-        for key, u in keys:
-            if key not in nums:
-                nums[key] = len(urls) + 1
-                urls.append(u)
+    def renumber(m):  # only a comma or semicolon before the next URL splits: URLs may hold them
+        keys = [(norm_url(u), u.rstrip(".,;:")) for u in re.split(r"\s*[,;]\s*(?=(?:https?|file):)", m.group(1))]
+        for key, u in ((k, u) for k, u in keys if k not in nums):  # checked as it goes: a repeat is numbered once
+            urls.append(u)
+            nums[key] = len(urls)
         return "[" + ", ".join(str(nums[k]) for k, _ in keys) + "]"
     return renumber
-
 def section_order(run: Path) -> list:
     """Section ids in plan.md heading order, then other sections/*.md (not _top/_end) by name."""
     plan = read_text(run / "plan.md").splitlines() if (run / "plan.md").is_file() else []
     ids = list(dict.fromkeys(m.group(1).lower() for line in plan if (m := PLAN_ID.match(line))))
     return ids + sorted(p.stem for p in (run / "sections").glob("*.md") if p.stem.lower() not in ("_top", "_end", *ids))
-
 def cmd_assemble(run: Path, title: str = "Sources") -> int:
-    """Join the drafts into report.md; `[URL]` citations become `[n]`; sources follow SOURCES_MARK."""
+    """Join the drafts into report.md; `[URL]` citations become `[n]`; titled sources follow SOURCES_MARK. A report.md
+    rewritten since the last assembly (unlike report.assembled.md) is kept: this one goes to report.assembled.md."""
     secs, renumber = run / "sections", numberer({}, urls := [])
     if not secs.is_dir():
         print(f"error: sections folder missing: {secs}", file=sys.stderr)
@@ -796,11 +792,19 @@ def cmd_assemble(run: Path, title: str = "Sources") -> int:
         print(f"warning: sections/{sid}.md missing", file=sys.stderr)
     drafts = [t for t in map(part, section_order(run)) if t is not None]
     body = URL_CITE.sub(renumber, "\n\n".join(t for t in [part("_top"), *drafts] if t))
-    end, snaps = URL_CITE.sub(renumber, part("_end") or ""), load_snapshots(run)
-    refs = [" ".join(filter(None, (f"[{n}]", first_line(snaps.get(norm_url(u), "")), u))) for n, u in enumerate(urls, 1)]
+    end, heads = URL_CITE.sub(renumber, part("_end") or ""), {}
+    for raw in re.findall(r"\[(?:https?|file):[^\]]*\]", body + "\n" + end):
+        print(f"warning: citation left unnumbered (write [URL] or [URL, URL]): {raw}", file=sys.stderr)
+    load_snapshots(run, heads)
+    titles = {key: head.get("Title") or first_line(text) for key, (head, text) in heads.items()}
+    refs = [" ".join(filter(None, (f"[{n}]", titles.get(norm_url(u)), u))) for n, u in enumerate(urls, 1)]
     blocks = [body, END_MARK + ("\n" + end if end else ""), "\n".join([SOURCES_MARK, f"## {title}", "", *refs])]
-    write_text(run / "report.md", "\n\n".join(blocks) + "\n")
-    print(f"report.md: {len(drafts)} sections, {len(body.split())} body words, {len(urls)} sources")
+    text, out, copy = "\n\n".join(blocks) + "\n", run / "report.md", run / "report.assembled.md"
+    edited = copy.is_file() and out.is_file() and read_text(out).splitlines() != read_text(copy).splitlines()
+    for path in [copy] if edited else [out, copy][:1 + copy.is_file()]:
+        write_text(path, text)
+    print(f"{(copy if edited else out).name}: {len(drafts)} sections, {len(body.split())} body words, {len(urls)} sources"
+          + " (report.md was edited after assembly, so it is kept: carry these changes into it, then run diff)" * edited)
     return 0
 
 def doc_items(text: str) -> tuple:
@@ -814,7 +818,6 @@ def doc_items(text: str) -> tuple:
         items["quotes"] += [(frozenset([qnorm(q)]), f"“{excerpt(q, 80)}”", unit) for m in QUOTE_RX.finditer(unit)
                             if len((q := next(g for g in m.groups() if g)).split()) >= 4]
     return items, sources, sents
-
 def detached(old_sents, new_sents) -> list:
     """Old cited sentences whose closest new sentence (shared numbers, then shared words) has no citation."""
     def feats(s):
@@ -826,7 +829,6 @@ def detached(old_sents, new_sents) -> list:
         if best and any(score(best)) and not CITE.search(best[2]):
             out.append(f"citation detached: {excerpt(s, 120)} -> now: {excerpt(best[2], 120)}")
     return out
-
 def pair(old, new) -> tuple:
     """Match items sharing a key, same sentence first; return (unmatched old, unmatched new)."""
     old, new = list(old), list(new)
@@ -836,11 +838,10 @@ def pair(old, new) -> tuple:
                 old.remove(item)
                 new.remove(hit)
     return old, new
-
 def diff(old_text: str, new_text: str) -> list:
     """What an edit lost, changed or added; added citations and sources carry "(ok)". An empty list means a pure rephrase."""
     (old, old_src, old_sents), (new, new_src, new_sents) = doc_items(old_text), doc_items(new_text)
-    out = []
+    out = [f"marker missing: {k}" for k in (END_MARK, SOURCES_MARK) if old_text.count(k) > new_text.count(k)]
     for kind in old:
         lost, added = pair(old[kind], new[kind])
         name = "quote missing or altered" if kind == "quotes" else f"{kind[:-1]} missing"
@@ -854,8 +855,7 @@ def diff(old_text: str, new_text: str) -> list:
 
 def main(argv=None) -> int:
     setup_console()
-    parser = argparse.ArgumentParser(prog="python scripts/vafer_check.py",
-                                     description="Snapshot pages and check a vafer-research report.")
+    parser = argparse.ArgumentParser(prog="python scripts/vafer_check.py", description=__doc__ and __doc__.splitlines()[0])
     sub, path = parser.add_subparsers(dest="cmd", required=True), {"type": Path}
     for name, hlp, opts in (
             ("fetch", "download pages into <run>/pages", [("run", path), ("urls", {"nargs": "+"}), ("--find", {
@@ -882,15 +882,15 @@ def main(argv=None) -> int:
     if args.cmd == "diff":
         changes = diff(read_text(args.old), read_text(args.new))
         bad = sum("(ok)" not in c for c in changes)  # additions alone pass
-        print("\n".join(changes + [f"diff: {bad} problem{'s' if bad != 1 else ''}"
-                                    if bad else "diff: clean (numbers, citations, quotes, sources kept)"]))
+        print("\n".join(changes + [f"diff: {plural(bad, 'problem')}" if bad
+                                    else "diff: clean (numbers, citations, quotes, sources and markers kept)"]))
         return 1 if bad else 0
     if args.section:
         flags = check_section(args.run, args.section)
         sev = [f["severity"] for f in flags]
         print(f"section {args.section}: {len(flags)} flags ({sev.count('high')} high, {sev.count('medium')} medium, "
-              f"{sev.count('low')} low)", *(f"{f['severity']} {f['kind']}: {f['excerpt']} — {f['detail']}" for f in flags),
-              sep="\n")
+              f"{sev.count('low')} low)", *(f"{f['severity']} {f['kind']}: {f['excerpt']} — {f['detail']}"
+                                            + (" — " + " ".join(f["urls"]) if f["urls"] else "") for f in flags), sep="\n")
         return 0
     result = check(args.run)
     print(f"{result['summary']}\nSource mix: {result['mix']}")

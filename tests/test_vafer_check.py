@@ -5,7 +5,9 @@ from __future__ import annotations
 import collections
 import contextlib
 import email.message
+import hashlib
 import io
+import os
 import shutil
 import sys
 import tempfile
@@ -90,6 +92,29 @@ class NumberTests(unittest.TestCase):
         self.assertEqual(values("1.2 million and 3 thousand"), [Decimal(1200000), Decimal(3000)])
         self.assertEqual(values("5 bina, the bin"), [Decimal(5)])
 
+    def test_ranges_are_one_token_with_a_key_per_end(self):
+        for text, keys in (("16.–19. yüzyıllarda", ["century 16", "century 19"]),
+                           ("XVI-XVII. yüzyıl", ["century 16", "century 17"]),
+                           ("16th–19th centuries", ["century 16", "century 19"]),
+                           ("17–18 Ağustos 1999", ["date 1999-08-17", "date 1999-08-18"]),
+                           ("4-11 Eylül 1919", ["date 1919-09-04", "date 1919-09-11"])):
+            with self.subTest(text=text):
+                self.assertEqual([[k for k, _ in n.cands] for n in vc.numbers(text)], [keys])
+
+    def test_cardinals_are_not_centuries(self):
+        self.assertEqual(values("3 yüzyıl boyunca, for 2 centuries"), [Decimal(3), Decimal(2)])
+        self.assertEqual(values("16. yüzyıl, XVI. yüzyıl, the sixteenth century"), ["century 16"] * 3)
+
+    def test_dotted_time_needs_saat_a_suffix_or_am_pm(self):
+        self.assertEqual(values("stood at 3.45 percent; traded at 18.50 per dollar; faiz %3.45'te"),
+                         [Decimal("3.45"), Decimal("18.50"), Decimal("3.45")])
+        self.assertEqual(values("peaked at 1.25 million"), [Decimal(1250000)])
+        self.assertEqual(values("saat 03.02'de, 03.02'de, 3.45 pm, at 3:45"),
+                         ["time 3:02", "time 3:02", "time 3:45", "time 3:45"])
+
+    def test_mixed_separators_have_no_reading(self):
+        self.assertEqual(values("1,234.567,8 and 1.234,567.8 and 7"), [Decimal(7)])
+
 
 class SentenceTests(unittest.TestCase):
     def test_abbreviations_and_roman_numerals_do_not_split(self):
@@ -156,7 +181,7 @@ class CheckTests(RunCase):
 
     def test_marker_heading_and_url_normalization(self):
         self.page("http://epdk.gov.tr/tarifeler?utm_source=x#top", "Fiyat 2,61 TL")
-        self.report("Fiyat 2,61 TL [1].", heading=f"{vc.SOURCES_MARK}\n### Kaynakça")
+        self.report("Fiyat 2,61 TL [1].", heading=f"{vc.END_MARK}\n{vc.SOURCES_MARK}\n### Kaynakça")
         result = self.check()
         self.assertEqual(self.kinds(), [])
         self.assertEqual(result["matched"], 1)
@@ -445,6 +470,40 @@ class QuietCheckTests(RunCase):
                 self.check()
                 self.assertEqual(self.kinds(), [])
 
+    def test_ranges_match_either_end(self):
+        for report, page, flagged in (
+                ("16.–19. yüzyıllarda kaza idi [1].", "16. yüzyılda köydü. 19. yüzyılda kaza oldu.", False),
+                ("Kent 16. yüzyılda köydü [1].", "16.-19. yüzyıllarda kaza idi.", False),
+                ("Deprem 17–18 Ağustos 1999 gecesi oldu [1].", "Deprem 17 Ağustos 1999 günü oldu.", False),
+                ("Kongre 4 Eylül 1919'da toplandı [1].", "Kongre 4-11 Eylül 1919 arasında toplandı.", False),
+                ("It began in the 16th century [1].", "XVI-XVII. yüzyıl boyunca sürdü.", False),
+                ("16.–19. yüzyıllarda kaza idi [1].", "12. yüzyılda kuruldu.", True)):
+            with self.subTest(report=report, page=page):
+                self.fresh_page(URL1, page)
+                self.report(report)
+                self.check()
+                self.assertEqual(self.kinds(), ["number-mismatch"] if flagged else [])
+
+    def test_date_line_in_any_language(self):
+        self.page(URL1, "Fiyat 2,61 TL")
+        for line in ("Fecha: 31 de octubre de 2026", "Fecha: 2026-10-31", "Datum: 31.10.2026",
+                     "**Data:** 31 ottobre 2026", "Tarih: 29 Ekim 2026"):
+            with self.subTest(line=line):
+                self.report(f"{line}\n\nFiyat 2,61 TL [1].")
+                self.check()
+                self.assertEqual(self.kinds(), [])
+        self.report("Not: 25 köy etkilendi.\n\n## Bölüm\n\nKayıt: 31 il, 2026 yılı.\n\nFiyat 2,61 TL [1].")
+        self.check()
+        self.assertEqual([f["detail"] for f in self.result["flags"]],
+                         ["numbers without citation: 25", "numbers without citation: 31"])
+
+    def test_historical_year_mismatch_is_low(self):
+        self.page(URL1, "Hamam onarıldı. Kale MÖ 300 dolayında kuruldu.")
+        self.report("Onarım Hicrî 1316, yani 1899 yılında [1]. Kent MÖ 280'de kuruldu [1]. It fell in 280 BC [1]. "
+                    "Toplam 1.500 kişi [1].")
+        self.check()
+        self.assertEqual(sorted(self.flags()), [("number-mismatch", "low")] * 4 + [("number-mismatch", "medium")])
+
     def end_report(self, table_rows, prose="", sources=((1, URL1), (2, URL2))):
         table = "| topic | A | B | verdict | why |\n|---|---|---|---|---|\n" + "\n".join(table_rows)
         entries = "\n".join(f"[{n}] Title {n}. {u}" for n, u in sources)
@@ -461,6 +520,29 @@ class QuietCheckTests(RunCase):
         self.check()
         self.assertEqual(self.flags(), [("b-unopened", "high")])
         self.assertIn("1.200 köy", self.result["flags"][0]["excerpt"])
+        self.assertIn("neither [n] nor †: open its page and cite it, or mark it †", self.result["flags"][0]["detail"])
+
+    def test_b_cell_citations_count_for_the_row(self):
+        self.page(URL1, "Fiyat 2,61 TL. Eski ölçüm alanı 4.200 m² verir.")
+        self.page(URL2, "Kazı ekibi alanı yaklaşık 3.000 m² olarak verdi.")
+        self.end_report(["| alan | 4.200 m² [1] | 3.000 m² [2] | Yaklaşık 3.000 m² | Kazı ekibinin son yayını |"])
+        self.check()
+        self.assertEqual(self.kinds(), [])
+
+    def test_marker_missing_is_a_high_flag(self):
+        self.page(URL1, "Fiyat 2,61 TL. Köy sayısı 30.")
+        self.page(URL2, "Kaynak sayfası, rakam yok.")
+        self.end_report(["| köy sayısı | 30 köy [1] | 1.200 köy | A | açık |"])
+        path = self.run / "report.md"
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(vc.END_MARK + "\n", ""), encoding="utf-8")
+        self.check()
+        marks = [f for f in self.result["flags"] if f["kind"] == "marker-missing"]
+        self.assertEqual([(f["severity"], vc.END_MARK in f["excerpt"]) for f in marks], [("high", True)])
+        (self.run / "report.assembled.md").write_text(text, encoding="utf-8")
+        path.write_text(text.replace(vc.END_MARK + "\n", "").replace(vc.SOURCES_MARK + "\n", ""), encoding="utf-8")
+        self.check()
+        self.assertEqual([f for f in self.flags() if f[0] == "marker-missing"], [("marker-missing", "high")] * 2)
 
     def test_unknowns_block_not_matched(self):
         self.page(URL1, "Fiyat 2,61 TL.")
@@ -490,6 +572,7 @@ class QuietCheckTests(RunCase):
         result = self.check()
         self.assertEqual(sorted(self.flags()), [("number-mismatch", "low"), ("uncited", "medium"), ("unused", "low")])
         self.assertEqual(result["open"], 1)
+        self.assertTrue(result["summary"].endswith("; 1 open high/medium flag of 1 (check.md)"), result["summary"])
         check_md = (self.run / "check.md").read_text(encoding="utf-8")
         low = check_md.split("Low (no answer needed)")[1]
         self.assertIn("unused", low)
@@ -543,6 +626,7 @@ class QuietCheckTests(RunCase):
         self.assertEqual(lines[0], "section s1: 1 flags (0 high, 1 medium, 0 low)")
         self.assertTrue(lines[1].startswith("medium number-mismatch: Abone sayısı 450"), lines)
         self.assertIn(" — 450 not found", lines[1])
+        self.assertTrue(lines[1].endswith(" — https://a.org/x"), lines)
         self.assertFalse((self.run / "check.md").exists())
         self.assertEqual((self.run / "evidence.md").read_text(encoding="utf-8"), "Source check: pending\n")
 
@@ -553,7 +637,7 @@ class AssembleTests(RunCase):
     def setUp(self):
         super().setUp()
         (self.run / "sections").mkdir()
-        self.page("https://a.org/x", "\n\nAlpha Agency Report\nFiyat 2,61 TL ve 300 abone.")
+        self.page("https://a.org/x", "\n\nAlpha Agency Annual Report\nFiyat 2,61 TL ve 300 abone.")
         self.page("https://b.org/y", "Beta Page " + "z" * 200 + "\nNüfus 270.976.")
         (self.run / "plan.md").write_text("# Plan\n\n## S2 — second\n\n### g1 gap\n\n## S1 first\n\n## S9 missing\n",
                                           encoding="utf-8")
@@ -604,7 +688,7 @@ class AssembleTests(RunCase):
         tail = text.split(vc.SOURCES_MARK)[1].strip().splitlines()
         self.assertEqual(tail[0], "## Fuentes")
         self.assertEqual(tail[2], "[1] " + ("Beta Page " + "z" * 200)[:120] + " https://b.org/y")
-        self.assertEqual(tail[3], "[2] Alpha Agency Report https://a.org/x")
+        self.assertEqual(tail[3], "[2] Alpha Agency Annual Report https://a.org/x")
         _, sources, _ = vc.parse_report(text)
         self.assertEqual(sources, {1: "https://b.org/y", 2: "https://a.org/x"})
 
@@ -637,10 +721,10 @@ class AssembleTests(RunCase):
         self.assertRegex(self.out, r"report\.md: 4 sections")
 
     def test_assemble_title_never_holds_a_url(self):
-        self.page("https://c.org/z", "https://doi.org/10.1/abc\nGamma Journal 2019\nDeğer 7,5 ölçüldü.")
+        self.page("https://c.org/z", "https://doi.org/10.1/abc\nGamma Journal of Studies 2019\nDeğer 7,5 ölçüldü.")
         self.section("s9", "## Dokuz\n\nDeğer 7,5 [https://c.org/z].")
         text = self.assemble()
-        self.assertIn("\n[3] Gamma Journal 2019 https://c.org/z\n", text)
+        self.assertIn("\n[3] Gamma Journal of Studies 2019 https://c.org/z\n", text)
         self.assertEqual(vc.parse_report(text)[1][3], "https://c.org/z")
         kinds = [f["kind"] for f in vc.check(self.run)["flags"]]
         self.assertNotIn("unverifiable", kinds)
@@ -656,6 +740,50 @@ class AssembleTests(RunCase):
         self.assertNotIn("unverifiable", kinds)
         self.assertNotIn("number-mismatch", kinds)
         self.assertEqual(vc.URL_RX.search("(bkz. https://a.org/x).").group(0), "https://a.org/x")
+
+    def test_assemble_titles_prefer_header_and_skip_navigation(self):
+        (self.run / "pages" / "h.txt").write_text("URL: https://h.org/t\nStatus: ok\nTitle: Yalova Kaplıcaları Raporu\n\n"
+                                                  "Skip to main content\n" + "Uzun metin satırı burada. " * 20,
+                                                  encoding="utf-8")
+        self.page("https://n.org/u", "Skip to main content\nJump to content\n| Search: Submit Search\n"
+                                     "| Home | Encyclopedia | Summa | Fathers | Bible | Library |\n"
+                                     "Short URL for this page:\nISSN: 0041-4255 · e-ISSN: 2791-7584\n2019 2020 2021 2022 2023\n"
+                                     "Haber ara...\nYalova'nın İdari Tarihi Üzerine Bir İnceleme\nMetin.")
+        self.section("s9", "## Dokuz\n\nBilgi [https://h.org/t]. Ek [https://n.org/u].")
+        text = self.assemble()
+        self.assertIn("\n[3] Yalova Kaplıcaları Raporu https://h.org/t\n", text)
+        self.assertIn("\n[4] Yalova'nın İdari Tarihi Üzerine Bir İnceleme https://n.org/u\n", text)
+
+    def test_assemble_keeps_a_rewritten_report(self):
+        vc.write_text(self.run / "report.assembled.md", self.assemble())
+        self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x]. Takip bir.")
+        second = self.assemble()  # report.md not rewritten yet: both files take the new assembly
+        self.assertIn("Takip bir.", second)
+        self.assertEqual((self.run / "report.assembled.md").read_text(encoding="utf-8"), second)
+        rewrite = second.replace("Kısa cevap", "Akıcı kısa cevap")
+        vc.write_text(self.run / "report.md", rewrite)
+        self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x]. Takip iki.")
+        self.assertEqual(self.assemble(), rewrite)
+        self.assertIn("Takip iki.", (self.run / "report.assembled.md").read_text(encoding="utf-8"))
+        self.assertTrue(self.out.startswith("report.assembled.md: ") and "report.md was edited" in self.out, self.out)
+
+    def test_urls_with_apostrophe_comma_or_escapes_roundtrip(self):
+        apos, comma = "https://tr.wikipedia.org/wiki/Türkiye'nin_illeri", "https://en.wikipedia.org/wiki/Washington,_D.C."
+        self.page(apos, "Türkiye'nin 81 ili vardır.")
+        self.page(comma, "Population 689,545 in the 2020 census.")
+        self.page("https://tr.wikipedia.org/wiki/%C3%87%C4%B1narc%C4%B1k", "Nüfus 30.000 kişi.")
+        self.section("s9", f"## Dokuz\n\nİl sayısı 81 [{apos}]. Nüfus 689,545 [{comma}; https://tr.wikipedia.org/wiki/"
+                           "Çınarcık]. Kasaba 30.000 [https://tr.wikipedia.org/wiki/Çınarcık].")
+        text = self.assemble()
+        self.assertNotIn("[http", text + self.err)
+        self.assertEqual(vc.parse_report(text)[1][3], apos)
+        self.assertEqual(len(vc.parse_report(text)[1]), 5)
+        kinds = [f["kind"] for f in vc.check(self.run)["flags"]]
+        self.assertNotIn("unverifiable", kinds)
+        self.assertNotIn("number-mismatch", kinds)
+        self.section("x1", "## Ek\n\nEk bilgi [https://x.org/a b].")
+        self.assemble()
+        self.assertIn("[https://x.org/a b]", self.err)
 
     def test_assemble_warns_without_top_and_end(self):
         for sid in ("_top", "_end"):
@@ -724,6 +852,21 @@ class DiffTests(unittest.TestCase):
         self.assertEqual([c for c in out if "(ok)" not in c], [], out)
         self.assertIn("citation added (ok): [4]", "\n".join(out))
         self.assertIn("source [4] added (ok): https://d.org/4", out)
+
+    def test_lost_marker_is_a_problem(self):
+        old = OLD.replace(vc.SOURCES_MARK, f"{vc.END_MARK}\n\n{vc.SOURCES_MARK}")
+        tmp = Path(tempfile.mkdtemp(prefix="vafer-diff-"))
+        try:
+            (tmp / "old.md").write_text(old, encoding="utf-8")
+            for mark in (vc.END_MARK, vc.SOURCES_MARK):
+                with self.subTest(mark=mark):
+                    new = old.replace(mark + "\n", "")
+                    self.assertEqual(vc.diff(old, new), [f"marker missing: {mark}"])
+                    (tmp / "new.md").write_text(new, encoding="utf-8")
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(vc.main(["diff", str(tmp / "old.md"), str(tmp / "new.md")]), 1)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_citation_detached(self):
         new = OLD.replace("Kayıt 4.472 oldu [1].", "Kayıt 4.472 oldu. Bu veri resmidir [1].")
@@ -816,14 +959,16 @@ class FetchTests(RunCase):
 
         def opener(req, timeout):
             calls.append((req.full_url, timeout))
-            return FakeResponse(("<h1>Tarife duyurusu</h1>" + PROSE).encode(), "text/html")
+            return FakeResponse(("<html><head><title>Tarife duyurusu</title></head><body><h1>Duyuru</h1>" + PROSE
+                                 + "</body></html>").encode(), "text/html")
 
         lines = self.fetch(["https://example.org/t"], opener)
         status, name, chars, title = lines[0].split(" ", 3)
         self.assertEqual((status, title), ("ok", "Tarife duyurusu"))
         self.assertGreater(int(chars), 400)
         raw = (self.run / "pages" / name).read_text(encoding="utf-8")
-        self.assertRegex(raw, r"^URL: https://example.org/t\nFetched: .+\nStatus: ok\nCharset: .+\nSHA256: \w+\n\n")
+        self.assertRegex(raw, r"^URL: https://example.org/t\nFetched: .+\nStatus: ok\nCharset: .+\nSHA256: \w+\n"
+                              r"Title: Tarife duyurusu\n\n")
         self.assertEqual(calls, [("https://example.org/t", 20)])
         again = self.fetch(["https://example.org/t/", "https://www.example.org/t#p3"], opener)
         self.assertEqual(again, [lines[0], lines[0]])
@@ -855,6 +1000,93 @@ class FetchTests(RunCase):
         self.assertEqual(out.getvalue().count("ok "), 24)
         leftovers = [p.name for p in (self.run / "pages").iterdir() if not p.name.endswith(".txt")]
         self.assertEqual(leftovers, [])
+
+    def test_stale_lock_is_broken_and_a_live_one_kept(self):
+        url = "https://example.org/locked"
+        lock = self.run / "pages" / (hashlib.sha1(vc.norm_url(url).encode("utf-8")).hexdigest()[:12] + ".lock")
+        lock.touch()
+        os.utime(lock, (time.time() - 3600,) * 2)  # left by a fetch that was killed an hour ago
+        start = time.time()
+        lines = self.fetch([url], lambda req, timeout: FakeResponse(PROSE.encode(), "text/html"))
+        self.assertLess(time.time() - start, 5)
+        self.assertTrue(lines[0].startswith("ok "), lines)
+        self.assertFalse(lock.exists())
+        lock.touch()  # a live fetch holds it: the ok snapshot is read at once and the lock is left alone
+        start = time.time()
+        self.assertEqual(self.fetch([url], mock.Mock(side_effect=AssertionError("downloaded again"))), lines)
+        self.assertLess(time.time() - start, 5)
+        self.assertTrue(lock.exists())
+
+    def test_save_uses_a_private_temp_name_and_retries_permission_errors(self):
+        calls, real, target = [], os.replace, self.run / "pages" / "a.txt"
+
+        def flaky(src, dst):
+            calls.append(Path(src).name)
+            if len(calls) < 3:
+                raise PermissionError("in use")
+            real(src, dst)
+
+        with mock.patch.object(vc.os, "replace", flaky), mock.patch.object(vc.time, "sleep", lambda s: None):
+            vc.save(target, "body")
+        self.assertEqual(target.read_text(encoding="utf-8"), "body")
+        self.assertEqual(len(calls), 3)
+        self.assertIn(str(os.getpid()), calls[0])
+
+    def test_unexpected_error_stays_on_its_line(self):
+        real = vc.save
+
+        def save(path, data):
+            if "boom" in str(data)[:100]:
+                raise PermissionError("in use")
+            real(path, data)
+
+        with mock.patch.object(vc, "save", save):
+            lines = self.fetch(["https://x.org/boom", "https://x.org/fine"],
+                               lambda req, timeout: FakeResponse(PROSE.encode(), "text/html"))
+        self.assertEqual(lines[0], "error:PermissionError - 0")
+        self.assertTrue(lines[1].startswith("ok "), lines)
+
+    def test_non_ascii_url_is_quoted_for_the_request(self):
+        seen, url = [], "https://tr.wikipedia.org/wiki/Çınarcık"
+
+        def opener(req, timeout):
+            seen.append(req.full_url)
+            return FakeResponse(PROSE.encode(), "text/html")
+
+        lines = self.fetch([url], opener)
+        self.assertEqual(seen, ["https://tr.wikipedia.org/wiki/%C3%87%C4%B1narc%C4%B1k"])
+        self.assertTrue(lines[0].startswith("ok "), lines)
+        raw = next((self.run / "pages").glob("*.txt")).read_text(encoding="utf-8")
+        self.assertTrue(raw.startswith(f"URL: {url}\n"), raw[:80])
+        self.assertIn(vc.norm_url(url), vc.load_snapshots(self.run))
+
+    def test_title_header_from_meta_title_or_body(self):
+        pages = {"cite": '<html><head><title>Site | Home</title><meta name="citation_title" content="Kaplıcalar &amp; '
+                         'Tarih"><meta property="og:title" content="OG"></head><body>' + PROSE + '</body></html>',
+                 "og": '<html><head><meta content="Open Graph Başlığı" property="og:title"><title>Yedek</title></head>'
+                       '<body>' + PROSE + '</body></html>',
+                 "plain": '<html><head><title> Çınarcık\n İlçesi </title></head><body><svg><title>ikon</title></svg>'
+                          + PROSE + '</body></html>',
+                 "none": '<body><p>Skip to main content</p><p>Menü</p><p>| Search: Submit Search</p>' + PROSE + '</body>'}
+        lines = self.fetch([f"https://t.org/{k}" for k in pages],
+                           lambda req, timeout: FakeResponse(pages[req.full_url.rsplit("/", 1)[1]].encode(), "text/html"))
+        self.assertEqual([line.split(" ", 3)[3] for line in lines],
+                         ["Kaplıcalar & Tarih", "Open Graph Başlığı", "Çınarcık İlçesi",
+                          "Paragraph 0: the regulator published the full tariff table and the explanatory notes today."])
+        raws = [p.read_text(encoding="utf-8") for p in (self.run / "pages").glob("*.txt")]
+        self.assertTrue(any("\nTitle: Kaplıcalar & Tarih\n\n" in raw for raw in raws))
+
+    def test_find_prints_only_hits_under_their_url(self):
+        self.page("https://www.iski.istanbul/baraj", "İSKİ baraj doluluk oranı yüzde 41.")
+        self.page("https://a.org/other", "Başka bir sayfa.")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            vc.cmd_find(self.run, "baraj", ["https://www.iski.istanbul/baraj", "https://a.org/other", "https://none.org/z"])
+        out = buf.getvalue().splitlines()
+        self.assertEqual(out[0], "https://www.iski.istanbul/baraj")
+        self.assertIn("İSKİ baraj", out[1])
+        self.assertEqual(out[-1], "1 page without hits; 1 URL without a snapshot: https://none.org/z")
+        self.assertNotIn("(no hit)", buf.getvalue())
 
     def test_host_limit_two_at_a_time(self):
         state, lock = {"now": 0, "peak": 0}, threading.Lock()
@@ -936,14 +1168,13 @@ class FetchTests(RunCase):
         self.assertTrue(lines[0].startswith("ok "), lines)
         self.assertTrue(lines[1].startswith("boilerplate "), lines)
 
-    def pdf_fetch(self, which):
+    def pdf_fetch(self, which, body="Reading order paragraph about water tariffs in the city. " * 12):
         raw, runs = b"%PDF-1.4 fake", []
 
         def fake_run(args, **kwargs):
             runs.append(args)
             text = "LAYOUT col1     col2\n" if "-layout" in args else ""
-            Path(args[-1]).write_text(text + "Reading order paragraph about water tariffs in the city. " * 12,
-                                      encoding="utf-8")
+            Path(args[-1]).write_text(text + body, encoding="utf-8")
 
         with mock.patch.object(vc.shutil, "which", lambda name: which), \
                 mock.patch.object(vc.subprocess, "run", fake_run):
@@ -960,6 +1191,18 @@ class FetchTests(RunCase):
         self.assertEqual(list(snaps), ["x.org/doc.pdf"])
         self.assertIn("Reading order paragraph", snaps["x.org/doc.pdf"])
         self.assertIn("LAYOUT col1", snaps["x.org/doc.pdf"])
+
+    def test_pdf_title_skips_numbers_labels_and_issn(self):
+        body = ("87\nISSN: 0041-4255 · e-ISSN: 2791-7584\nS a y f a | 75\nYalova Kaplıcalarının Osmanlı Dönemi\n"
+                + "Reading order paragraph about water tariffs in the city. " * 12)
+        lines, _, _ = self.pdf_fetch("pdftotext", body)
+        self.assertTrue(lines[0].startswith("ok ") and lines[0].endswith(" Yalova Kaplıcalarının Osmanlı Dönemi"), lines)
+
+    def test_scanned_pdf_is_saved_for_the_pdf_reader(self):
+        lines, runs, raw = self.pdf_fetch("pdftotext", "\f\n  \n")
+        self.assertTrue(lines[0].startswith("pdf-saved ") and ".pdf" in lines[0], lines)
+        self.assertEqual([p.read_bytes() for p in (self.run / "pages").glob("*.pdf")], [raw])
+        self.assertEqual(vc.load_snapshots(self.run), {})
 
     def test_pdf_saved_without_pdftotext(self):
         lines, runs, raw = self.pdf_fetch(None)
