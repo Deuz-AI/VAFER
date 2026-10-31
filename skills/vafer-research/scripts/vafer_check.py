@@ -3,11 +3,11 @@
 
 Usage:
   python scripts/vafer_check.py fetch <run> <url> [<url> ...]
-  python scripts/vafer_check.py check <run>
+  python scripts/vafer_check.py check <run> [--section <id>]
   python scripts/vafer_check.py diff <old.md> <new.md>
 
-Stdlib only. `check` never touches the network and is advisory (exit 0),
-except when the run folder or report.md is missing (exit 2). `diff` exits 1 when an edit lost or
+Stdlib only. `check` never touches the network and is advisory (exit 0), except when the run folder,
+report.md or the section draft is missing (exit 2). `check --section` writes nothing. `diff` exits 1 when an edit lost or
 changed a number, citation, quote or source entry, or detached a citation; additions alone pass.
 """
 from __future__ import annotations
@@ -30,7 +30,24 @@ NUM = re.compile(r"(?<![\w.,])(?P<neg>[-−](?=\d))?"
 OPS = re.compile(r"[×*·/÷+−]|(?<![^\W\d_])x(?![^\W\d_])|(?<!\S)-(?!\S)")
 OPMAP = {"×": "*", "*": "*", "·": "*", "x": "*", "/": "/", "÷": "/", "+": "+", "−": "-", "-": "-"}
 QUOTE_RX = re.compile(r'"([^"\n]+)"|“([^”\n]+)”|«([^»\n]+)»|„([^“”\n]+)[“”]')
-RECEIPT = re.compile(r'^\s*[-*+]\s+(?P<fact>.*?)["“„](?P<span>[^"“”\n]+)["”“]\s*(?P<url>https?://\S+|file:///\S+)')
+RECEIPT = re.compile(r'^\s*[-*+]\s+(?P<fact>.*?)["“„](?P<span>.+)["”“]\s*<?(?P<url>(?:https?:|file:/)//[^\s<>]+)>?')
+URL_CITE = re.compile(r"\[((?:https?|file):[^\]\s,;]+(?:\s*[,;]\s*(?:https?|file):[^\]\s,;]+)*)\]")  # sections/<id>.md
+MONTHS = ("ocak şubat mart nisan mayıs haziran temmuz ağustos eylül ekim kasım aralık january february march april "
+          "may june july august september october november december").split()
+MON = "|".join(MONTHS)
+ORDS = ("first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth "
+        "fifteenth sixteenth seventeenth eighteenth nineteenth twentieth twenty-first").split()
+# one-token figures: ISO, dotted and written dates; Roman or ordinal centuries; clock times (accepted in `special`)
+SPECIAL = re.compile(r"(?<![\w.,:])(?:(?P<iy>\d{4})-(?P<im>\d{1,2})-(?P<id>\d{1,2})"
+                     r"|(?P<dd>\d{1,2})[./](?P<dm>\d{1,2})[./](?P<dy>\d{4})"
+                     rf"|(?P<td>\d{{1,2}})(?:\.|st|nd|rd|th)?\s+(?:of\s+)?(?P<tm>{MON})\s+(?P<ty>\d{{4}})"
+                     rf"|(?P<em>{MON})\s+(?P<ed>\d{{1,2}})(?:st|nd|rd|th)?,?\s+(?P<ey>\d{{4}})"
+                     rf"|(?P<c>\d{{1,2}}|[IVXLC]{{1,6}}|{'|'.join(ORDS[::-1])})(?:\.|st|nd|rd|th)?[\s-]*"
+                     r"(?:yüzyıl|yy\b|century|centuries)"
+                     r"|(?P<h>[01]?\d|2[0-3])(?P<sep>[:.])(?P<mi>[0-5]\d))(?!\d)", re.I)
+SEVERITY = {"equation-wrong": "high", "b-unopened": "high", "dangling": "high", "quote-missing": "high",
+            "lead-only": "medium", "number-mismatch": "medium", "uncited": "medium", "unverifiable": "medium",
+            "label-leak": "medium"}  # every other kind is low
 HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 SOURCES_MARK, END_MARK = "<!-- vafer:sources -->", "<!-- vafer:end -->"
 COMMENT = re.compile(r"^\s*<!--.*-->\s*$")
@@ -60,7 +77,7 @@ LEAK = re.compile(r"\[(?:GAP|prior|brainstorm)\]|\b(?:COVERED|PARTIAL|NOT-FOUND|
 QMAP = str.maketrans({"“": '"', "”": '"', "„": '"', "«": '"', "»": '"', "‘": "'", "’": "'", "‚": "'",
                       "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "―": "-", "−": "-"})
 QUOTE_FLAGS = {"near": ("quote-near", "matches only after Turkish-aware case folding"),
-               "missing": ("quote-mismatch", "quoted span not found in cited snapshots or receipts")}
+               "missing": ("quote-missing", "quoted span not found in cited snapshots or receipts")}
 Num = namedtuple("Num", "start end text cands")
 
 def setup_console() -> None:
@@ -277,17 +294,44 @@ def spelled(m) -> list:
     base = parse_number(m.group("n")) if m.group("n") else [(Decimal(100 if m.group("yuz") else 1), 0)]
     return [(v.scaleb(exp) + tail, d - exp if d and not tail else 0) for v, d in base]
 
+def roman(s: str) -> int:
+    vals = [{"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}[c] for c in s.upper()]
+    return sum(-v if i + 1 < len(vals) and v < vals[i + 1] else v for i, v in enumerate(vals))
+
+def special(m, text: str):
+    """Key of a one-token figure ("date 1923-10-29", "century 16", "time 3:02"), or None to read it as numbers."""
+    g = m.groupdict()
+    if g["c"]:
+        c = g["c"].lower()
+        n = int(c) if c.isdigit() else ORDS.index(c) + 1 if c in ORDS else roman(c)
+        return f"century {n}" if 0 < n <= 21 else None
+    if g["h"]:  # a dotted time needs "saat"/"at" before it or a suffix/am/pm after it
+        ok = (g["sep"] == ":" or re.search(r"\b(?:saat|at)\s*$", text[:m.start()], re.I)
+              or re.match(r"['’]?[dt][ae]\b|\s*[ap]\.?m\b", text[m.end():], re.I))
+        return f"time {int(g['h'])}:{g['mi']}" if ok else None
+    y, mo, d = next((g[a], g[b], g[c]) for a, b, c in (("iy", "im", "id"), ("dy", "dm", "dd"), ("ty", "tm", "td"),
+                                                        ("ey", "em", "ed")) if g[a])
+    mo = int(mo) if mo.isdigit() else [tr_fold(x) for x in MONTHS].index(tr_fold(mo)) % 12 + 1
+    return f"date {int(y)}-{mo:02}-{int(d):02}" if 1 <= mo <= 12 and 1 <= int(d) <= 31 else None
+
 def numbers(text: str, masked=False) -> list:
-    """All number tokens in text (citations and URLs excluded), written-out scales included."""
-    text = text if masked else mask(text)
-    out = [Num(m.start(), m.end(), m.group(0), spelled(m)) for m in SPELL.finditer(text)
-           if m.group("n") or m.group("yuz") or m.group("tail")]
+    """All number tokens in text (citations and URLs excluded): one-token dates, centuries and times, written-out
+    scales, then plain numbers."""
+    text, out = (text if masked else mask(text)), []
+    for m in SPECIAL.finditer(text):
+        if key := special(m, text):
+            out.append(Num(m.start(), m.end(), m.group(0), [(key, 0)]))
+            text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+    out += [Num(m.start(), m.end(), m.group(0), spelled(m)) for m in SPELL.finditer(text)
+            if m.group("n") or m.group("yuz") or m.group("tail")]
     spans = [(n.start, n.end) for n in out]
     out += [Num(m.start(), m.end(), m.group(0), parse_number(m.group("n"), bool(m.group("neg"))))
             for m in NUM.finditer(text) if not any(s <= m.start() < e for s, e in spans)]
     return sorted(out, key=lambda n: n.start)
 
-def rounds_to(src: Decimal, value: Decimal, places: int) -> bool:
+def rounds_to(src, value, places: int) -> bool:
+    if not isinstance(src, Decimal) or not isinstance(value, Decimal):
+        return src == value  # one-token keys match only themselves
     try:
         return src == value or src.quantize(Decimal(1).scaleb(-places), ROUND_HALF_UP) == value
     except ArithmeticError:
@@ -320,11 +364,11 @@ def equation_ok(chain, ops, result) -> tuple:
     for combo in itertools.product(*[[v for v, _ in n.cands] for n in chain]):
         try:
             got = evaluate(list(combo), ops)
-        except (ArithmeticError, InvalidOperation):
+        except (ArithmeticError, InvalidOperation, TypeError):
             continue
         first = got if first is None else first
         for rv, rd in result.cands:
-            if abs(got - rv) <= abs(rv) * Decimal("0.005") or rounds_to(got, rv, rd):
+            if isinstance(rv, Decimal) and abs(got - rv) <= abs(rv) * Decimal("0.005") or rounds_to(got, rv, rd):
                 return True, got
     return False, first
 
@@ -378,15 +422,32 @@ def receipt_label(line: str) -> tuple:
     words = re.findall(r"[^\W\d_]+", groups[-1].lower()) if groups else []
     return next((LABELS[w] for w in words if w in LABELS), None), "unverified" in words
 
-def load_receipts(run: Path) -> tuple:
-    """Receipt spans and (label, unverified) pairs from notes/*.md, both keyed by normalized URL."""
-    spans, labels = {}, {}
+def loose(text: str) -> str:
+    """Fold case (Turkish-aware), quotes and dashes; drop whitespace and hyphenation."""
+    return re.sub(r"[\s­-]+", "", tr_fold(unicodedata.normalize("NFC", text).translate(QMAP)))
+
+def load_receipts(run: Path, snaps=None) -> tuple:
+    """Receipt spans and (label, unverified) pairs from notes/*.md, both keyed by normalized URL, and parse stats.
+    Unverified spans, and spans absent from their URL's snapshot, are left out and counted, not flagged."""
+    spans, labels, hay, snaps = {}, {}, {}, snaps or {}
+    stats = {"parsed": 0, "dropped": 0, "unverified": 0, "unparsed": []}
     for path in sorted((run / "notes").glob("*.md")):
         for line in read_text(path).splitlines():
-            if m := RECEIPT.match(line):
-                spans.setdefault(norm_url(m.group("url")), []).append(m.group("span"))
-                labels.setdefault(norm_url(m.group("url")), []).append(receipt_label(line[m.end():]))
-    return spans, labels
+            if not (m := RECEIPT.match(line)):
+                if re.match(r"\s*[-*+]\s", line) and URL_RX.search(line) and re.search(r'["“”„]', line):
+                    stats["unparsed"].append(line.strip())
+                continue
+            key, (label, unverified) = norm_url(m.group("url")), receipt_label(line[m.end():])
+            stats["parsed"] += 1
+            labels.setdefault(key, []).append((label, unverified))
+            parts = [p for p in map(loose, re.split(r"\[\.\.\.\]|\.\.\.|…", m.group("span"))) if p]
+            if unverified:
+                stats["unverified"] += 1
+            elif key in snaps and not all(p in hay.setdefault(key, loose(snaps[key])) for p in parts):
+                stats["dropped"] += 1
+            else:
+                spans.setdefault(key, []).append(m.group("span"))
+    return spans, labels, stats
 
 def lead_domain(url: str) -> bool:
     host = (urllib.parse.urlsplit(url.strip()).hostname or "").removeprefix("www.")
@@ -439,39 +500,50 @@ def parse_report(text: str):
     end = next((i for i, line in enumerate(top) if line.strip() == END_MARK), None)
     return (top, sources, []) if end is None else (top[:end], sources, top[end + 1:])
 
-def sentences(body_lines) -> list:
-    """Split body prose into sentences; table rows stay whole; skip headings, fences, comments, check and date lines."""
-    out, fenced = [], False
-    for line in body_lines:
+def split_line(line: str) -> list:
+    parts, cuts = [], [0] + [m.end() for m in SENT_END.finditer(line)] + [len(line)]
+    for part in (line[a:b].strip() for a, b in zip(cuts, cuts[1:])):
+        if parts and (re.fullmatch(r"(?:\s*\[[^\]]+\]\s*[.,;]?)+", part) or ABBR.search(parts[-1])):
+            parts[-1] += " " + part
+        else:
+            parts.append(part)
+    return [p for p in parts if p.strip()]
+
+def groups(lines) -> list:
+    """(first line index, sentences, is_table) per paragraph, list item or table: a citation's borrowing scope.
+    Table rows stay whole; headings, fences, comments, check and date lines are skipped and end a group."""
+    out, fenced, cur = [], False, None
+    for i, line in enumerate(lines):
         if line.lstrip().startswith("```"):
-            fenced = not fenced
+            fenced, cur = not fenced, None
             continue
         if (fenced or HEADING.match(line) or COMMENT.match(line) or CHECK_LINE.search(line) or MIX_LINE.search(line)
                 or DATE_LINE.match(line) or not line.strip()):
+            cur = None
             continue
-        line, parts = LIST_MARK.sub("", line, count=1).strip(), []
-        if line.startswith("|"):
-            out.append(line)
-            continue
-        cuts = [0] + [m.end() for m in SENT_END.finditer(line)] + [len(line)]
-        for part in (line[a:b].strip() for a, b in zip(cuts, cuts[1:])):
-            if parts and (re.fullmatch(r"(?:\s*\[[^\]]+\]\s*[.,;]?)+", part) or ABBR.search(parts[-1])):
-                parts[-1] += " " + part
-            else:
-                parts.append(part)
-        out.extend(p for p in parts if p.strip())
-    return out
+        text = LIST_MARK.sub("", line, count=1).strip()
+        table = text.startswith("|")
+        if cur is None or (LIST_MARK.match(line) and not table) or table != cur[2]:
+            out.append(cur := (i, [], table))
+        cur[1].extend([text] if table else split_line(text))
+    return [g for g in out if g[1]]
+
+def sentences(body_lines) -> list:
+    """Body prose split into sentences (see `groups`)."""
+    return [s for _, sents, _ in groups(body_lines) for s in sents]
 
 def excerpt(text: str, limit=140) -> str:
     text = squash(text).replace("|", "\\|")
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 class Checker:
-    """Holds evidence for one run and collects flags."""
+    """Holds evidence for one run, checks report lines and collects flags."""
     def __init__(self, run: Path):
-        (self.receipts, self.labels), self.snaps = load_receipts(run), load_snapshots(run)
-        self.flags, self._pool = [], {}
-        self.figures = self.matched = self.eq_ok = self.eq_bad = 0
+        self.snaps = load_snapshots(run)
+        self.receipts, self.labels, self.rstats = load_receipts(run, self.snaps)
+        self.flags, self._pool, self.first_seen = [], {}, {}
+        self.counts = {"quoted": 0, "page": 0, "missing": 0, "none": 0}
+        self.eq_ok = self.eq_bad = 0
     def has_evidence(self, url: str) -> bool:
         return norm_url(url) in self.receipts or norm_url(url) in self.snaps
     def labels_of(self, url: str) -> list:
@@ -488,32 +560,33 @@ class Checker:
     def texts(self, urls) -> list:
         return [t for key in map(norm_url, urls)
                 for t in self.receipts.get(key, []) + ([self.snaps[key]] if key in self.snaps else [])]
-    def pool(self, url: str) -> list:
-        key = norm_url(url)
+    def pool(self, url: str, kind: str) -> list:
+        """Number readings of a URL's receipt spans ("quoted") or of its snapshot ("page")."""
+        key = (norm_url(url), kind)
         if key not in self._pool:
-            self._pool[key] = [c for t in self.texts([url]) for n in numbers(t) for c in n.cands]
+            texts = self.receipts.get(key[0], []) if kind == "quoted" else [self.snaps.get(key[0], "")]
+            self._pool[key] = [c for t in texts for n in numbers(t) for c in n.cands]
         return self._pool[key]
-    def flag(self, kind, sentence, urls, detail):
-        self.flags.append({"kind": kind, "excerpt": excerpt(sentence), "urls": list(dict.fromkeys(urls)),
-                           "detail": detail})
+    def flag(self, kind, sentence, urls, detail, severity=None):
+        self.flags.append({"kind": kind, "severity": severity or SEVERITY.get(kind, "low"), "excerpt": excerpt(sentence),
+                           "urls": list(dict.fromkeys(urls)), "detail": detail})
     def check_number(self, num: Num, urls, sentence):
         urls = [u for u in urls if self.has_evidence(u)]
-        if not urls:
-            return
-        self.figures += 1
-        if any(num_matches(num, self.pool(u)) for u in urls):
-            self.matched += 1
-        else:
-            low = " (year; low severity)" if is_year(num) else ""
-            self.flag("number-mismatch", sentence, urls, f"{num.text.strip()} not found in cited sources{low}")
-    def check_sentence(self, sentence: str, sources: dict):
+        found = next((k for k in ("quoted", "page") if any(num_matches(num, self.pool(u, k)) for u in urls)), "missing")
+        self.counts[found if urls else "none"] += 1
+        if urls and found == "missing":
+            self.flag("number-mismatch", sentence, urls, f"{num.text.strip()} not found in cited sources"
+                      + (" (year)" if is_year(num) else ""), "low" if is_year(num) else None)
+    def check_sentence(self, sentence: str, sources: dict, borrowed=()):
+        """Check one sentence; without citations of its own it uses `borrowed` (its paragraph's or table's)."""
         masked = mask(sentence)
         cites = [(m.start(), expand_cites(m.group(1))) for m in CITE.finditer(sentence)]
         cited = [n for _, ns in cites for n in ns]
-        urls = [sources[n] for n in cited if n in sources]
+        scope = cited or list(borrowed)
+        urls = [sources[n] for n in scope if n in sources]
         nums = numbers(masked, masked=True)
         used = set()
-        uncited, low = ("uncited-table", " (table row; low severity)") if sentence.startswith("|") else ("uncited", "")
+        uncited = "uncited-table" if sentence.startswith("|") else "uncited"
         for chain, ops, result, eq_pos in find_equations(masked, nums):
             used.update(n.start for n in chain + [result])
             ok, got = equation_ok(chain, ops, result)
@@ -533,10 +606,10 @@ class Checker:
                     continue  # bare integer input (12 months, 100 %): treated as a constant
                 elif urls:
                     self.check_number(num, urls, sentence)
-                elif not cited:
-                    self.flag(uncited, sentence, [], f"equation input {num.text.strip()} has no citation{low}")
+                elif not scope:
+                    self.flag(uncited, sentence, [], f"equation input {num.text.strip()} has no citation")
         rest = [n for n in nums if n.start not in used]
-        if cited:
+        if scope:
             for num in rest:
                 self.check_number(num, urls, sentence)
             ev_urls = [u for u in urls if self.has_evidence(u)]
@@ -549,73 +622,107 @@ class Checker:
                     kind, detail = QUOTE_FLAGS[status]
                     self.flag(kind, sentence, ev_urls, f"“{excerpt(quote, 80)}”: {detail}")
         else:
-            loose = [n.text.strip() for n in rest if not is_year(n) and not is_small_int(n)]
-            if loose:
-                self.flag(uncited, sentence, [], "numbers without citation: " + ", ".join(loose) + low)
+            loose_nums = [n.text.strip() for n in rest if not is_year(n) and not is_small_int(n)]
+            if loose_nums:
+                self.flag(uncited, sentence, [], "numbers without citation: " + ", ".join(loose_nums))
         return cited
+    def note_cites(self, text: str):
+        for m in CITE.finditer(text):
+            for n in expand_cites(m.group(1)):
+                self.first_seen.setdefault(n, text)
+    def check_group(self, sents, sources, first=False):
+        borrowed = [n for s in sents for m in CITE.finditer(s) for n in expand_cites(m.group(1))]
+        for sentence in sents:
+            cited = self.check_sentence(sentence, sources, borrowed)
+            self.note_cites(sentence)
+            urls = [sources[n] for n in cited if n in sources]
+            if urls and all(self.is_lead(u) for u in urls):
+                self.flag("lead-only", sentence, urls, "every cited source is lead-class (wiki, forum, blog, "
+                          "aggregator)", "high" if first else None)
+    def check_end(self, end, sources):
+        """END block: its first table is checked without the B column (a B cell needs `[n]` or †); the rest
+        (unknowns) only registers citations."""
+        gs = groups(end)
+        table = next((g for g in gs if g[2]), None)
+        for sentence in (s for g in gs if g is not table for s in g[1]):
+            self.note_cites(sentence)
+        rows = []
+        for k, row in enumerate(table[1] if table else []):
+            cells = row.strip().strip("|").split("|")
+            if k and len(cells) > 2 and not re.fullmatch(r"[\s:|-]+", row):
+                b = cells[2].strip()
+                self.note_cites(b)
+                if b.strip("—–- ") and not CITE.search(b) and "†" not in b:
+                    self.flag("b-unopened", row, [], f"B value `{excerpt(b, 60)}` has no [n] and no † (not opened)")
+                cells[2] = " "
+            rows.append("|" + "|".join(cells) + "|")
+        self.check_group(rows, sources)
+    def scan(self, body, sources, end=(), cut=0, unused=True):
+        """Check body groups (lead-only is high before line `cut`), the END block, sources and leaks."""
+        for i, sents, _ in groups(body):
+            self.check_group(sents, sources, i < cut)
+        self.check_end(end, sources)
+        for n, sentence in self.first_seen.items():
+            if n not in sources:
+                self.flag("dangling", sentence, [], f"[{n}] has no entry in the sources section")
+        for n, url in sorted(sources.items()):
+            if unused and n not in self.first_seen:
+                self.flag("unused", f"[{n}] {url}", [url], "source entry is never cited in the body")
+            if not self.has_evidence(url):
+                self.flag("unverifiable", f"[{n}] {url}", [url], "no page snapshot and no receipt for this URL")
+        for line in (line for line in list(body) + list(end) if not CHECK_LINE.search(line)):
+            for m in LEAK.finditer(line):
+                self.flag("label-leak", line, [], f"internal label `{m.group(0)}` in report body")
 
 def old_dispositions(path: Path) -> dict:
     """Filled-in dispositions of a previous check.md, keyed by (kind, report excerpt), in row order."""
     old = {}
     for line in read_text(path).splitlines() if path.exists() else []:
         cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
-        if len(cells) >= 6 and re.fullmatch(r"F\d+", cells[0]):
-            disp = " | ".join(cells[5:]).strip()
+        if len(cells) >= 7 and re.fullmatch(r"F\d+", cells[0]):
+            disp = " | ".join(cells[6:]).strip()
             if disp.removeprefix("disposition:").strip():
-                old.setdefault((cells[1], cells[2]), []).append(disp)
+                old.setdefault((cells[2], cells[3]), []).append(disp)
     return old
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 def check(run: Path) -> dict:
     """Run every check; write check.md and update the Source check line."""
     report_path = run / "report.md"
     text = read_text(report_path)
     body, sources, end = parse_report(text)
-    body += end  # the END block is checked like the body for now
     checker = Checker(run)
-    first_seen = {}
     h2 = [i for i, line in enumerate(body) if line.startswith("## ")]
-    cut = h2[1] if len(h2) > 1 else len(body)  # first section: text before the second `## ` heading
-    for first, part in ((True, body[:cut]), (False, body[cut:])):
-        for sentence in sentences(part):
-            cited = checker.check_sentence(sentence, sources)
-            for n in cited:
-                first_seen.setdefault(n, sentence)
-            urls = [sources[n] for n in cited if n in sources]
-            if urls and all(checker.is_lead(u) for u in urls):
-                checker.flag("lead-only", sentence, urls, "every cited source is lead-class (wiki, forum, blog, "
-                             "aggregator)" + (" (first section; high severity)" if first else " (medium severity)"))
-    for n, sentence in first_seen.items():
-        if n not in sources:
-            checker.flag("dangling", sentence, [], f"[{n}] has no entry in the sources section")
-    for n, url in sorted(sources.items()):
-        if n not in first_seen:
-            checker.flag("unused", f"[{n}] {url}", [url], "source entry is never cited in the body")
-        if not checker.has_evidence(url):
-            checker.flag("unverifiable", f"[{n}] {url}", [url], "no page snapshot and no receipt for this URL")
-    for line in (line for line in body if not CHECK_LINE.search(line)):
-        for m in LEAK.finditer(line):
-            checker.flag("label-leak", line, [], f"internal label `{m.group(0)}` in report body")
-
-    evidence = "page snapshots" if checker.snaps else "note receipts"
-    eqs = (f"{checker.eq_ok} equation{'s' if checker.eq_ok != 1 else ''} correct"
-           + (f", {checker.eq_bad} wrong" if checker.eq_bad else ""))
+    checker.scan(body, sources, end, h2[1] if len(h2) > 1 else len(body))  # first section: before the second `## `
+    flags, c, rs = checker.flags, checker.counts, checker.rstats
     old = old_dispositions(run / "check.md")  # holds filled-in dispositions only
-    disps = [(old.get((f["kind"], f["excerpt"])) or ["disposition:"]).pop(0) for f in checker.flags]
-    count = len(checker.flags)
-    summary = (f"script, {evidence} — {checker.matched} of {checker.figures} figures matched, {eqs}, "
-               f"{count} flag{'s' if count != 1 else ''}, {disps.count('disposition:')} open (check.md)")
-    cited_urls = {norm_url(sources[n]): sources[n] for n in first_seen if n in sources}
+    asked = [f for f in flags if f["severity"] != "low"]
+    disps = [(old.get((f["kind"], f["excerpt"])) or ["disposition:"]).pop(0) for f in asked]
+    open_n = disps.count("disposition:")
+    eqs = f"{plural(checker.eq_ok, 'equation')} correct" + (f", {checker.eq_bad} wrong" if checker.eq_bad else "")
+    summary = (f"script — {plural(sum(c.values()), 'figure')}: {c['quoted']} in a quoted receipt, {c['page']} elsewhere "
+               f"on the cited page, {c['missing']} not found, {c['none']} without evidence; {eqs}; "
+               f"{open_n} open high/medium flag{'' if open_n == 1 else 's'} of {len(flags)} (check.md)")
+    cited_urls = {norm_url(sources[n]): sources[n] for n in checker.first_seen if n in sources}
     classes = [checker.source_class(u) for u in cited_urls.values()]
-    mix = ", ".join(f"{classes.count(c)} {c}" for c in MIX)
+    mix = ", ".join(f"{classes.count(k)} {k}" for k in MIX)
 
     rows = ["# Source check", "", summary, "", f"Source mix: {mix}", "",
-            "| id | kind | report excerpt | cited | expected / found | disposition |",
-            "|---|---|---|---|---|---|"]
-    for i, (f, disp) in enumerate(zip(checker.flags, disps), 1):
-        urls = ", ".join(f["urls"]) or "—"
-        rows.append(f"| F{i} | {f['kind']} | {f['excerpt']} | {urls} | {excerpt(f['detail'], 200)} | {disp} |")
-    rows += ["", "Disposition: fixed / derived / false alarm: <reason> / † (marked unverified, with a footnote).", ""]
-    write_text(run / "check.md", "\n".join(rows))
+            f"Receipts: {rs['parsed']} parsed, {rs['dropped']} not in their snapshot (dropped), {rs['unverified']} "
+            f"unverified, {len(rs['unparsed'])} unparsed", *[f"- unparsed: {excerpt(u, 160)}" for u in rs["unparsed"][:5]],
+            "", "| id | severity | kind | report excerpt | cited | expected / found | disposition |",
+            "|---|---|---|---|---|---|---|"]
+    for i, (f, disp) in enumerate(zip(asked, disps), 1):
+        rows.append(f"| F{i} | {f['severity']} | {f['kind']} | {f['excerpt']} | {', '.join(f['urls']) or '—'} | "
+                    f"{excerpt(f['detail'], 200)} | {disp} |")
+    rows += ["", "Disposition: fixed / derived / false alarm: <reason> / † (marked unverified, with a footnote).", "",
+             "## Low (no answer needed)", "", "| id | kind | report excerpt | cited | expected / found |",
+             "|---|---|---|---|---|"]
+    rows += [f"| L{i} | {f['kind']} | {f['excerpt']} | {', '.join(f['urls']) or '—'} | {excerpt(f['detail'], 200)} |"
+             for i, f in enumerate((f for f in flags if f["severity"] == "low"), 1)]
+    write_text(run / "check.md", "\n".join(rows + [""]))
 
     path = run / "evidence.md" if (run / "evidence.md").exists() else report_path  # never both
     old_text = read_text(path)
@@ -624,8 +731,22 @@ def check(run: Path) -> dict:
         updated = MIX_LINE.sub(lambda m: m.group("pre") + mix, updated)
     if updated != old_text:
         write_text(path, updated)
-    return {"summary": summary, "mix": mix, "flags": checker.flags, "figures": checker.figures,
-            "matched": checker.matched, "eq_ok": checker.eq_ok, "eq_bad": checker.eq_bad}
+    return {"summary": summary, "mix": mix, "flags": flags, "open": open_n, "counts": dict(c),
+            "figures": sum(c.values()), "matched": c["quoted"] + c["page"], "eq_ok": checker.eq_ok,
+            "eq_bad": checker.eq_bad}
+
+def check_section(run: Path, sid: str) -> list:
+    """Check one researcher draft, sections/<sid>.md, whose citations are `[URL]`; write nothing."""
+    sources, nums = {}, {}
+    def renumber(m):
+        ns = [nums.setdefault(norm_url(u), len(nums) + 1) for u in re.split(r"\s*[,;]\s*", m.group(1))]
+        for n, u in zip(ns, re.split(r"\s*[,;]\s*", m.group(1))):
+            sources.setdefault(n, u)
+        return "[" + ", ".join(map(str, ns)) + "]"
+    body = URL_CITE.sub(renumber, read_text(run / "sections" / f"{sid}.md")).splitlines()
+    checker = Checker(run)
+    checker.scan(body, sources, unused=False)
+    return checker.flags
 
 def doc_items(text: str) -> tuple:
     """Numbers, citation markers and 4+ word quotes of a report body as (keys, label, unit); sources; sentences."""
@@ -689,7 +810,9 @@ def main(argv=None) -> int:
     fetch_p = sub.add_parser("fetch", help="download pages into <run>/pages")
     fetch_p.add_argument("run", type=Path)
     fetch_p.add_argument("urls", nargs="+")
-    sub.add_parser("check", help="check <run>/report.md (offline, advisory)").add_argument("run", type=Path)
+    check_p = sub.add_parser("check", help="check <run>/report.md, or one draft with --section (offline, advisory)")
+    check_p.add_argument("run", type=Path)
+    check_p.add_argument("--section", metavar="ID", help="check sections/<ID>.md only; writes nothing")
     diff_p = sub.add_parser("diff", help="compare an edited report with its previous version")
     diff_p.add_argument("old", type=Path)
     diff_p.add_argument("new", type=Path)
@@ -705,6 +828,17 @@ def main(argv=None) -> int:
         print("\n".join(changes + [f"diff: {bad} problem{'s' if bad != 1 else ''}"
                                     if bad else "diff: clean (numbers, citations, quotes, sources kept)"]))
         return 1 if bad else 0
+    if args.section:
+        if not (args.run / "sections" / f"{args.section}.md").is_file():
+            print(f"error: section draft missing: {args.run / 'sections' / args.section}.md", file=sys.stderr)
+            return 2
+        flags = check_section(args.run, args.section)
+        sev = [f["severity"] for f in flags]
+        print(f"section {args.section}: {len(flags)} flags ({sev.count('high')} high, {sev.count('medium')} medium, "
+              f"{sev.count('low')} low)")
+        for f in flags:
+            print(f"{f['severity']} {f['kind']}: {f['excerpt']} — {f['detail']}")
+        return 0
     if not args.run.is_dir() or not (args.run / "report.md").is_file():
         print(f"error: run folder or report.md missing: {args.run}", file=sys.stderr)
         return 2

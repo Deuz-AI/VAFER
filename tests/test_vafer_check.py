@@ -139,7 +139,8 @@ class CheckTests(RunCase):
                     'Metin: "İstanbul bölgesinde tarifeyi değiştirdi" [1]. '
                     'Ayrıca "fiyatlar hiç değişmeyecek dedi" [1].')
         self.check()
-        self.assertEqual(self.kinds(), ["quote-near", "quote-mismatch"])
+        self.assertEqual(self.kinds(), ["quote-near", "quote-missing"])
+        self.assertEqual([f["severity"] for f in self.result["flags"]], ["low", "high"])
 
     def test_dangling_and_unused(self):
         self.page(URL1, "nothing numeric")
@@ -215,7 +216,7 @@ class CheckTests(RunCase):
 
     def test_uncited_number(self):
         self.page(URL1, "Fiyat 2,61 TL")
-        self.report("Fiyat 2,61 TL [1]. Hane sayısı 4.500 oldu. In 2024 there were 3 plans.")
+        self.report("Fiyat 2,61 TL [1].\n\nHane sayısı 4.500 oldu. In 2024 there were 3 plans.")
         self.check()
         self.assertEqual(self.kinds(), ["uncited"])
         self.assertIn("4.500", self.result["flags"][0]["detail"])
@@ -230,9 +231,15 @@ class CheckTests(RunCase):
         self.report("Fiyat 2,61 TL [1].\n\n**Source check:** pending")
         result = self.check()
         text = (self.run / "report.md").read_text(encoding="utf-8")
-        self.assertIn("**Source check:** script, page snapshots — 1 of 1 figures matched", text)
+        self.assertIn("**Source check:** script — 1 figure: 0 in a quoted receipt, 1 elsewhere on the cited page, "
+                      "0 not found, 0 without evidence; 0 equations correct; 0 open high/medium flags of 0 (check.md)",
+                      text)
         self.assertNotIn("pending", text)
-        self.assertIn(result["summary"], (self.run / "check.md").read_text(encoding="utf-8"))
+        check_md = (self.run / "check.md").read_text(encoding="utf-8")
+        self.assertIn(result["summary"], check_md)
+        self.assertIn("Receipts: 0 parsed, 0 not in their snapshot (dropped), 0 unverified, 0 unparsed", check_md)
+        self.assertIn("| id | severity | kind | report excerpt | cited | expected / found | disposition |", check_md)
+        self.assertIn("Low (no answer needed)", check_md)
 
     def test_evidence_md_gets_check_line_and_report_untouched(self):
         self.page(URL1, "Fiyat 2,61 TL")
@@ -245,11 +252,15 @@ class CheckTests(RunCase):
 
     def test_open_count_excludes_dispositioned_flags(self):
         self.page(URL1, "Fiyat 2,61 TL")
-        self.report("Fiyat 2,61 TL [1]. Hane sayısı 4.500 oldu.")
-        self.assertTrue(self.check()["summary"].endswith("1 flag, 1 open (check.md)"))
+        self.report("Fiyat 2,61 TL [1].\n\nHane sayısı 4.500 oldu.")
+        result = self.check()
+        self.assertTrue(result["summary"].endswith("; 1 open high/medium flag of 1 (check.md)"), result["summary"])
+        self.assertEqual(result["open"], 1)
         path = self.run / "check.md"
         path.write_text(path.read_text(encoding="utf-8").replace("| disposition: |", "| fixed |"), encoding="utf-8")
-        self.assertTrue(self.check()["summary"].endswith("1 flag, 0 open (check.md)"))
+        result = self.check()
+        self.assertTrue(result["summary"].endswith("; 0 open high/medium flags of 1 (check.md)"), result["summary"])
+        self.assertEqual(result["open"], 0)
 
     def test_no_summary_line_added(self):
         self.page(URL1, "Fiyat 2,61 TL")
@@ -278,7 +289,7 @@ class CheckTests(RunCase):
         self.report("Fiyat 2,61 TL [1].\n\n| İl | Nüfus |\n|---|---|\n| Ankara | 5.800.000 |")
         self.check()
         self.assertEqual(self.kinds(), ["uncited-table"])
-        self.assertIn("low severity", self.result["flags"][0]["detail"])
+        self.assertEqual(self.result["flags"][0]["severity"], "low")
 
     def test_mid_line_check_label_and_date_lines(self):
         self.page(URL1, "Fiyat 2,61 TL")
@@ -287,7 +298,7 @@ class CheckTests(RunCase):
         self.check()
         self.assertEqual(self.kinds(), [])
         text = (self.run / "report.md").read_text(encoding="utf-8")
-        self.assertIn("Tarih: 2026-10-29 · Source check: script, page snapshots", text)
+        self.assertIn("Tarih: 2026-10-29 · Source check: script — 1 figure: ", text)
         self.assertNotIn("pending", text)
 
     def test_dispositions_survive_rerun(self):
@@ -315,13 +326,15 @@ class LabelTests(RunCase):
                   f'- C — "span three" {WIKI} (opened 2026-10-28; lead; unverified)\n'
                   f'- D — "span four" https://x.org/a (opened 2026-10-28; derived)\n'
                   f'- E — "span five" https://x.org/b (opened 2026-10-28)\n')
-        spans, labels = vc.load_receipts(self.run)
+        spans, labels, stats = vc.load_receipts(self.run)
         self.assertEqual(labels[vc.norm_url(URL1)], [("official", False)])
         self.assertEqual(labels[vc.norm_url(URL2)], [("press", False)])
         self.assertEqual(labels[vc.norm_url(WIKI)], [("lead", True)])
         self.assertEqual(labels["x.org/a"], [("derived", False)])
         self.assertEqual(labels["x.org/b"], [(None, False)])
         self.assertEqual(spans["x.org/b"], ["span five"])
+        self.assertNotIn(vc.norm_url(WIKI), spans)
+        self.assertEqual((stats["parsed"], stats["unverified"]), (5, 1))
 
     def test_lead_only_severity_by_section(self):
         self.page(URL1, "nothing numeric")
@@ -330,8 +343,7 @@ class LabelTests(RunCase):
         self.check()
         lead = [f for f in self.result["flags"] if f["kind"] == "lead-only"]
         self.assertEqual(len(lead), 2)
-        self.assertIn("high severity", lead[0]["detail"])
-        self.assertIn("medium severity", lead[1]["detail"])
+        self.assertEqual([f["severity"] for f in lead], ["high", "medium"])
 
     def test_lead_by_receipt_label_and_domain_overridden(self):
         self.note(f'- A — "rate went up" {URL2} (opened 2026-10-28; lead)\n'
@@ -358,6 +370,158 @@ class LabelTests(RunCase):
         self.assertIn(f"**Source check:** {result['summary']}", evidence)
         self.assertIn(f"Source mix: {mix}", evidence)
         self.assertNotIn("pending", evidence)
+
+
+class QuietCheckTests(RunCase):
+    """Task 3: one-token dates and centuries, B-cell rule, borrowing, severities, honest counts, receipts."""
+
+    def flags(self):
+        return [(f["kind"], f["severity"]) for f in self.result["flags"]]
+
+    def fresh_page(self, url, text):
+        for path in self.run.joinpath("pages").glob("*"):
+            path.unlink()
+        self.page(url, text)
+
+    def test_roman_and_ordinal_centuries(self):
+        for report, page in (("XVI. yüzyılda kuruldu [1].", "Kent 16. yüzyıl başında kuruldu."),
+                             ("It was founded in the 16th century [1].", "Kent XVI. yüzyıl başında kuruldu."),
+                             ("Kale 11. yüzyılda yapıldı [1].", "Built by Alexios in the eleventh century.")):
+            with self.subTest(report=report):
+                self.fresh_page(URL1, page)
+                self.report(report)
+                self.check()
+                self.assertNotIn("number-mismatch", self.kinds())
+                self.assertEqual(self.result["counts"]["page"], 1)
+
+    def test_full_date_is_one_token(self):
+        self.page(URL1, "Cumhuriyet 29 Ekim 1923 günü ilan edildi.")
+        self.report("İlan 29.10.1923 [1] tarihindedir. ISO biçimi 1923-10-29 [1].")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(self.result["counts"]["page"], 2)
+        self.fresh_page(URL1, "Toplantıya 29 kişi geldi. 10 köy katıldı. Yıl 1923 idi.")
+        self.report("İlan 29.10.1923 [1] tarihindedir.")
+        self.check()
+        self.assertEqual(self.flags(), [("number-mismatch", "medium")])
+        self.assertIn("29.10.1923", self.result["flags"][0]["detail"])
+
+    def test_clock_time(self):
+        self.assertEqual([n.cands for n in vc.numbers("saat 03.02'de")], [[("time 3:02", 0)]])
+        self.page(URL1, "Deprem 3:02 sularında oldu.")
+        self.report("Deprem saat 03.02'de oldu [1].")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+
+    def test_decades(self):
+        for report, page in (("1930'larda göç arttı [1].", "1930'lu yıllarda göç arttı."),
+                             ("Migration rose in the 1930s [1].", "Migration rose in the 1930s.")):
+            with self.subTest(report=report):
+                self.fresh_page(URL1, page)
+                self.report(report)
+                self.check()
+                self.assertEqual(self.kinds(), [])
+
+    def end_report(self, table_rows, prose="", sources=((1, URL1), (2, URL2))):
+        table = "| topic | A | B | verdict | why |\n|---|---|---|---|---|\n" + "\n".join(table_rows)
+        entries = "\n".join(f"[{n}] Title {n}. {u}" for n, u in sources)
+        (self.run / "report.md").write_text(f"# R\n\nFiyat 2,61 TL [1].\n\n{vc.END_MARK}\n## Disagreements\n\n"
+                                            f"{table}\n\n{prose}\n\n{vc.SOURCES_MARK}\n## Sources\n\n{entries}\n",
+                                            encoding="utf-8")
+
+    def test_b_column_not_matched_and_b_cell_rule(self):
+        self.page(URL1, "Fiyat 2,61 TL. Köy sayısı 30. Kıyı 5 m.")
+        self.page(URL2, "Kaynak sayfası, rakam yok.")
+        self.end_report(["| köy sayısı | 30 köy [1] | 1.200 köy | A | açık |",
+                         "| kıyı | 5 m [1] | 4,80 m † | A | açılmadı |",
+                         "| köy | 30 köy [1] | 27 köy [2] | A | eski |"])
+        self.check()
+        self.assertEqual(self.flags(), [("b-unopened", "high")])
+        self.assertIn("1.200 köy", self.result["flags"][0]["excerpt"])
+
+    def test_unknowns_block_not_matched(self):
+        self.page(URL1, "Fiyat 2,61 TL.")
+        self.page(URL2, "Kaynak sayfası, rakam yok.")
+        self.end_report([], "Nüfusun 2030'da 400.000 olacağı bilinmiyor [2]. Oran 7,5 kadar olabilir.")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+
+    def test_citation_borrowing(self):
+        self.page(URL1, "Kent 1995'te il oldu. Nüfusu 270.976 kişidir.")
+        self.report("Kent 1995'te il oldu [1]. Nüfusu 270.976'dır.")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(self.result["counts"]["page"], 2)
+        self.report("Kent 1995'te il oldu [1].\n\nNüfusu 270.976'dır.")
+        self.check()
+        self.assertEqual(self.flags(), [("uncited", "medium")])
+        self.report("| İl | Nüfus |\n|---|---|\n| Yalnız | 1995 [1] |\n| Kent | 270.976 |")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+
+    def test_open_count_only_high_and_medium(self):
+        self.page(URL1, "Fiyat 2,61 TL")
+        self.page(URL2, "nothing numeric")
+        self.report("Fiyat 2,61 TL [1]. Kuruluş 1950 [1].\n\nHane sayısı 4.500 oldu.",
+                    sources=((1, URL1), (2, URL2)))
+        result = self.check()
+        self.assertEqual(sorted(self.flags()), [("number-mismatch", "low"), ("uncited", "medium"), ("unused", "low")])
+        self.assertEqual(result["open"], 1)
+        check_md = (self.run / "check.md").read_text(encoding="utf-8")
+        low = check_md.split("Low (no answer needed)")[1]
+        self.assertIn("unused", low)
+        self.assertNotIn("disposition:", low)
+
+    def test_honest_counts_line(self):
+        self.note(f'- Fee — "the fee is 7,25 TL" {URL1} (opened 2026-10-31; primary)\n')
+        self.page(URL1, "Tarife: the fee is 7,25 TL. Abone sayısı 1.200.")
+        self.report("Ücret 7,25 TL [1]. Abone 1.200 [1]. Hane 4.500 [1].\n\nSource check: pending")
+        result = self.check()
+        self.assertIn("3 figures: 1 in a quoted receipt, 1 elsewhere on the cited page, 1 not found, "
+                      "0 without evidence", result["summary"])
+        self.assertTrue(result["summary"].startswith("script — 3 figures"))
+        self.assertEqual(result["counts"], {"quoted": 1, "page": 1, "missing": 1, "none": 0})
+
+    def test_receipts_autolink_inner_quotes_and_span_validation(self):
+        self.page("https://x.org/p", "Intro text a ‘b’ c and more. Tari-\nfeleri GÜNCELLENDİ  bugün.")
+        self.note('- fact — "a \'b\' c" <https://x.org/p> (opened 2026-10-31; primary)\n'
+                  '- other — "tarifeleri güncellendi bugün" https://x.org/p (opened 2026-10-31; primary)\n'
+                  '- gone — "this text is not on the page" https://x.org/p (opened 2026-10-31; primary)\n'
+                  '- unv — "fee 9 TL" https://y.org/q (opened 2026-10-31; press; unverified)\n'
+                  '- broken — "no url after the quote" (opened 2026-10-31) see https://z.org\n')
+        spans, labels, stats = vc.load_receipts(self.run, vc.load_snapshots(self.run))
+        self.assertEqual(spans["x.org/p"], ["a 'b' c", "tarifeleri güncellendi bugün"])
+        self.assertNotIn("y.org/q", spans)
+        self.assertEqual((stats["parsed"], stats["dropped"], stats["unverified"], len(stats["unparsed"])),
+                         (4, 1, 1, 1))
+        self.report("Ücret 9 TL [1].", sources=((1, "https://y.org/q"),))
+        result = self.check()
+        self.assertEqual(result["counts"]["quoted"], 0)
+        self.assertIn("Receipts: 4 parsed, 1 not in their snapshot (dropped), 1 unverified, 1 unparsed",
+                      (self.run / "check.md").read_text(encoding="utf-8"))
+
+    def test_section_check(self):
+        (self.run / "sections").mkdir()
+        self.page("https://a.org/x", "Fiyat 2,61 TL ve 300 abone.")
+        (self.run / "sections" / "s1.md").write_text(
+            "## Fiyat\n\nFiyat 2,61 TL [https://a.org/x]. Abone sayısı 450 [https://a.org/x].\n", encoding="utf-8")
+        self.report("Nothing.\n\nSource check: pending", sources=())
+        (self.run / "evidence.md").write_text("Source check: pending\n", encoding="utf-8")
+        flags = vc.check_section(self.run, "s1")
+        self.assertEqual([(f["kind"], f["severity"]) for f in flags], [("number-mismatch", "medium")])
+        out = io.StringIO()
+        stdout, sys.stdout = sys.stdout, out
+        try:
+            code = vc.main(["check", str(self.run), "--section", "s1"])
+        finally:
+            sys.stdout = stdout
+        self.assertEqual(code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], "section s1: 1 flags (0 high, 1 medium, 0 low)")
+        self.assertTrue(lines[1].startswith("medium number-mismatch: Abone sayısı 450"), lines)
+        self.assertIn(" — 450 not found", lines[1])
+        self.assertFalse((self.run / "check.md").exists())
+        self.assertEqual((self.run / "evidence.md").read_text(encoding="utf-8"), "Source check: pending\n")
 
 
 OLD = ('# R\n\n## Özet\n\nKayıt 4.472 oldu [1]. Kurul "tarifeyi değiştirdi ve yeni dönem başladı" dedi [2-3].\n\n'
