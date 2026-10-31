@@ -6,9 +6,11 @@ import collections
 import contextlib
 import email.message
 import hashlib
+import http.server
 import io
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -20,7 +22,8 @@ from unittest import mock
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY / "skills" / "vafer-research" / "scripts"))
+SCRIPT = REPOSITORY / "skills" / "vafer-research" / "scripts" / "vafer_check.py"
+sys.path.insert(0, str(SCRIPT.parent))
 import vafer_check as vc  # noqa: E402
 
 URL1 = "https://www.epdk.gov.tr/tarifeler"
@@ -115,6 +118,25 @@ class NumberTests(unittest.TestCase):
     def test_mixed_separators_have_no_reading(self):
         self.assertEqual(values("1,234.567,8 and 1.234,567.8 and 7"), [Decimal(7)])
 
+    def test_abbreviated_and_foreign_months_and_centuries(self):
+        for text, key in (("Oct. 29, 1923", "date 1923-10-29"), ("29 Oct 1923", "date 1923-10-29"),
+                          ("Aug. 17, 1999", "date 1999-08-17"), ("Sept. 4th", "date --09-04"),
+                          ("29 de octubre de 1923", "date 1923-10-29"), ("29. Oktober 1923", "date 1923-10-29"),
+                          ("le 1er mai 1923", "date 1923-05-01"), ("29 ottobre 1923", "date 1923-10-29"),
+                          ("1º de maio de 1923", "date 1923-05-01"), ("MAYIS 5th", "date --05-05"),
+                          ("16. Jahrhundert", "century 16"), ("XVIe siècle", "century 16"), ("16e siècle", "century 16"),
+                          ("siglo XVI", "century 16"), ("no século XVI", "century 16"), ("nel XVI secolo", "century 16"),
+                          ("16. asırda", "century 16"), ("im 16. Jh.", "century 16")):
+            with self.subTest(text=text):
+                self.assertEqual(values(text), [key])
+
+    def test_month_day_needs_a_year_or_suffix_and_a_rate_is_not_a_time(self):
+        self.assertEqual(values("In May 5 people died; in March 15 villages; Kasım 3 kişi; Ocak 5 kişi"),
+                         [Decimal(5), Decimal(15), Decimal(3), Decimal(5)])
+        self.assertEqual(values("May 5th; May 5, 1921"), ["date --05-05", "date 1921-05-05"])
+        self.assertEqual(values("yüzde 3.45'te; dolar 12.50'de; % 3.45'te; faiz yüzde yaklaşık 3.45'te; saat 3.45'te"),
+                         [Decimal("3.45"), Decimal("12.50"), Decimal("3.45"), Decimal("3.45"), "time 3:45"])
+
 
 class SentenceTests(unittest.TestCase):
     def test_abbreviations_and_roman_numerals_do_not_split(self):
@@ -133,6 +155,13 @@ class SentenceTests(unittest.TestCase):
     def test_marker_lines_are_not_sentences(self):
         lines = [vc.END_MARK, "Text one. Text two.", vc.SOURCES_MARK, "  <!-- any comment -->"]
         self.assertEqual(vc.sentences(lines), ["Text one.", "Text two."])
+
+    def test_a_figure_is_never_split_or_read_as_a_list_mark(self):
+        line = "Die Stadt wurde im 16. Jahrhundert gegründet [1]. Am 29. Oktober 1923 wurde sie Hauptstadt."
+        self.assertEqual(vc.sentences([line]), ["Die Stadt wurde im 16. Jahrhundert gegründet [1].",
+                                                "Am 29. Oktober 1923 wurde sie Hauptstadt."])
+        self.assertEqual(vc.sentences(["16. yüzyılda kent büyüdü [1].", "1. Uno.", "2) Dos.", "- 3. Ekim yazısı."]),
+                         ["16. yüzyılda kent büyüdü [1].", "Uno.", "Dos.", "3. Ekim yazısı."])
 
 
 class CheckTests(RunCase):
@@ -162,6 +191,7 @@ class CheckTests(RunCase):
         self.assertEqual((result["eq_ok"], result["eq_bad"]), (1, 1))
         self.assertEqual(self.kinds(), ["equation-wrong"])
         self.assertEqual(result["matched"], 2)
+        self.assertIn("; 1 equations correct, 1 wrong; 1 open high/medium flags of 1 (check.md)", result["summary"])
 
     def test_quotes_exact_near_missing(self):
         self.page(URL1, "Kurul, İSTANBUL bölgesinde tarifeyi değiştirdi ve yeni dönem başladı.")
@@ -243,6 +273,14 @@ class CheckTests(RunCase):
         self.assertIn("2. Dos.", body)
         self.assertFalse(any("a.org" in line or "Referencias" in line for line in body))
         self.assertEqual(end, [])
+        three = {1: "https://a.org/1", 2: "https://b.org/2", 3: "https://c.org/3"}
+        nested = ("# R\n\nPrecio 2,61 € [1].\n\n## Kaynaklar\n\n### Birincil\n\n[1] A https://a.org/1\n[2] B https://b.org/2"
+                  "\n\n### İkincil\n\n[3] C https://c.org/3\n")
+        body, sources, _ = vc.parse_report(nested)
+        self.assertEqual((sources, body[-2]), (three, "Precio 2,61 € [1]."))
+        notes = ("# R\n\nPrecio 2,61 € [1].\n\n## Sources\n\n[1] A https://a.org/1\n[2] B https://b.org/2\n\n## Notes\n\n"
+                 + "".join(f"Note line {i} about the method.\n" for i in range(6)))
+        self.assertEqual(vc.parse_report(notes)[1], {1: "https://a.org/1", 2: "https://b.org/2"})
 
     def test_uncited_number(self):
         self.page(URL1, "Fiyat 2,61 TL")
@@ -261,7 +299,7 @@ class CheckTests(RunCase):
         self.report("Fiyat 2,61 TL [1].\n\n**Source check:** pending")
         result = self.check()
         text = (self.run / "report.md").read_text(encoding="utf-8")
-        self.assertIn("**Source check:** script — 1 figure: 0 in a quoted receipt, 1 elsewhere on the cited page, "
+        self.assertIn("**Source check:** script — 1 figures: 0 in a quoted receipt, 1 elsewhere on the cited page, "
                       "0 not found, 0 without evidence; 0 equations correct; 0 open high/medium flags of 0 (check.md)",
                       text)
         self.assertNotIn("pending", text)
@@ -284,7 +322,7 @@ class CheckTests(RunCase):
         self.page(URL1, "Fiyat 2,61 TL")
         self.report("Fiyat 2,61 TL [1].\n\nHane sayısı 4.500 oldu.")
         result = self.check()
-        self.assertTrue(result["summary"].endswith("; 1 open high/medium flag of 1 (check.md)"), result["summary"])
+        self.assertTrue(result["summary"].endswith("; 1 open high/medium flags of 1 (check.md)"), result["summary"])
         self.assertEqual(result["open"], 1)
         path = self.run / "check.md"
         path.write_text(path.read_text(encoding="utf-8").replace("| disposition: |", "| fixed |"), encoding="utf-8")
@@ -328,7 +366,7 @@ class CheckTests(RunCase):
         self.check()
         self.assertEqual(self.kinds(), [])
         text = (self.run / "report.md").read_text(encoding="utf-8")
-        self.assertIn("Tarih: 2026-10-29 · Source check: script — 1 figure: ", text)
+        self.assertIn("Tarih: 2026-10-29 · Source check: script — 1 figures: ", text)
         self.assertNotIn("pending", text)
 
     def test_dispositions_survive_rerun(self):
@@ -454,6 +492,41 @@ class QuietCheckTests(RunCase):
         self.assertEqual(self.flags(), [("number-mismatch", "medium")])
         self.assertIn("25 Mayıs not found", self.result["flags"][0]["detail"])
 
+    def test_dates_and_centuries_across_languages(self):
+        for report, page in (("Cumhuriyet 29 Ekim 1923'te ilan edildi [1].", "Proclaimed on Oct. 29, 1923."),
+                             ("Deprem 17 Ağustos 1999'da oldu [1].", "The quake struck on Aug. 17, 1999."),
+                             ("Cumhuriyet 29 Ekim 1923'te ilan edildi [1].", "Proclaimed 29 Oct 1923 in Ankara."),
+                             ("Se proclamó el 29 de octubre de 1923 [1].", "Proclaimed on 29 October 1923."),
+                             ("Die Stadt wurde im 16. Jahrhundert gegründet [1].", "The town was founded in the 16th century."),
+                             ("Am 29. Oktober 1923 wurde sie Hauptstadt [1].", "It became the capital on October 29, 1923."),
+                             ("La ville date du XVIe siècle [1].", "Kent 16. yüzyılda kuruldu."),
+                             ("La ciudad es del siglo XVI [1].", "The town dates from the 16th century.")):
+            with self.subTest(report=report):
+                self.fresh_page(URL1, page)
+                self.report(report)
+                self.check()
+                self.assertEqual(self.kinds(), [])
+                self.assertEqual(self.result["counts"]["page"], 1)
+
+    def test_token_falls_back_to_plain_parts_on_a_page_without_one(self):
+        for report, page, flagged in (
+                ("İlan 29 Ekim 1923'te yapıldı [1].", "Ogłoszono 29 października 1923 roku.", False),
+                ("Bayram 29 Ekim'de kutlanır [1].", "Święto obchodzone 29 października.", False),
+                ("Kent 16. yüzyılda kuruldu [1].", "De stad werd in de 16e eeuw gesticht.", False),
+                ("İlan 29 Ekim 1923'te yapıldı [1].", "Toplantıya 29 kişi geldi. 10 köy katıldı. Yıl 1923 idi.", True),
+                ("İlan 29 Ekim 1923'te yapıldı [1].", "Signed May 23, 1921. Ogłoszono 29 października 1923.", True)):
+            with self.subTest(report=report, page=page):
+                self.fresh_page(URL1, page)
+                self.report(report)
+                self.check()
+                self.assertEqual(self.kinds(), ["number-mismatch"] if flagged else [])
+
+    def test_paragraph_opening_with_a_century_is_checked(self):
+        self.page(URL1, "Kent XVI. yüzyıl başında büyüdü.")
+        self.report("16. yüzyılda kent büyüdü [1].")
+        self.check()
+        self.assertEqual((self.kinds(), self.result["counts"]["page"]), ([], 1))
+
     def test_clock_time(self):
         self.assertEqual([n.cands for n in vc.numbers("saat 03.02'de")], [[("time 3:02", 0)]])
         self.page(URL1, "Deprem 3:02 sularında oldu.")
@@ -522,6 +595,33 @@ class QuietCheckTests(RunCase):
         self.assertIn("1.200 köy", self.result["flags"][0]["excerpt"])
         self.assertIn("neither [n] nor †: open its page and cite it, or mark it †", self.result["flags"][0]["detail"])
 
+    def test_b_rule_needs_a_five_column_table_and_flags_keep_the_row(self):
+        self.page(URL1, "Fiyat 2,61 TL. Köy sayısı 30.")
+        self.page(URL2, "Kaynak sayfası, rakam yok.")
+        entries = f"[1] Title 1. {URL1}\n[2] Title 2. {URL2}"
+        (self.run / "report.md").write_text(
+            f"# R\n\nFiyat 2,61 TL [1]. Kaynak [2].\n\n{vc.END_MARK}\n## Bilinmeyenler\n\n| konu | bilinen | neden |\n"
+            f"|---|---|---|\n| nüfus | 2030 tahmini | kaynak yok |\n\n{vc.SOURCES_MARK}\n## Sources\n\n{entries}\n",
+            encoding="utf-8")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+        self.end_report(["| köy sayısı | 31 köy [1] | 27 köy [2] | A | eski |"])
+        self.check()
+        self.assertEqual(self.flags(), [("number-mismatch", "medium")])
+        self.assertIn("27 köy [2]", self.result["flags"][0]["excerpt"])
+
+    def test_b_unopened_cannot_be_closed_as_a_false_alarm(self):
+        self.page(URL1, "Fiyat 2,61 TL. Köy sayısı 30.")
+        self.page(URL2, "Kaynak sayfası, rakam yok.")
+        self.end_report(["| köy sayısı | 30 köy [1] | 1.200 köy | A | açık |", "| köy | 30 köy [1] | 27 köy [2] | A | eski |"])
+        self.check()
+        path, old = self.run / "check.md", "disposition:"
+        for disp, still_open in (("false alarm: B is wrong anyway", 1), ("† marked unverified", 0), ("Fixed", 0)):
+            with self.subTest(disp=disp):
+                path.write_text(path.read_text(encoding="utf-8").replace(f"| {old} |", f"| {disp} |"), encoding="utf-8")
+                self.assertEqual(self.check()["open"], still_open)
+                old = disp
+
     def test_b_cell_citations_count_for_the_row(self):
         self.page(URL1, "Fiyat 2,61 TL. Eski ölçüm alanı 4.200 m² verir.")
         self.page(URL2, "Kazı ekibi alanı yaklaşık 3.000 m² olarak verdi.")
@@ -572,7 +672,7 @@ class QuietCheckTests(RunCase):
         result = self.check()
         self.assertEqual(sorted(self.flags()), [("number-mismatch", "low"), ("uncited", "medium"), ("unused", "low")])
         self.assertEqual(result["open"], 1)
-        self.assertTrue(result["summary"].endswith("; 1 open high/medium flag of 1 (check.md)"), result["summary"])
+        self.assertTrue(result["summary"].endswith("; 1 open high/medium flags of 1 (check.md)"), result["summary"])
         check_md = (self.run / "check.md").read_text(encoding="utf-8")
         low = check_md.split("Low (no answer needed)")[1]
         self.assertIn("unused", low)
@@ -629,6 +729,15 @@ class QuietCheckTests(RunCase):
         self.assertTrue(lines[1].endswith(" — https://a.org/x"), lines)
         self.assertFalse((self.run / "check.md").exists())
         self.assertEqual((self.run / "evidence.md").read_text(encoding="utf-8"), "Source check: pending\n")
+
+    def test_section_lines_show_table_rows_unescaped(self):
+        (self.run / "sections").mkdir()
+        self.page("https://a.org/x", "Fiyat 2,61 TL ve 300 abone.")
+        (self.run / "sections" / "s1.md").write_text("| Abone | 450 [https://a.org/x] |\n", encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            vc.main(["check", str(self.run), "--section", "s1"])
+        self.assertIn("\nmedium number-mismatch: | Abone | 450 [1] | — 450 not found", out.getvalue())
 
 
 class AssembleTests(RunCase):
@@ -729,6 +838,27 @@ class AssembleTests(RunCase):
         kinds = [f["kind"] for f in vc.check(self.run)["flags"]]
         self.assertNotIn("unverifiable", kinds)
         self.assertNotIn("number-mismatch", kinds)
+
+    def test_title_with_a_link_keys_the_right_url(self):
+        url, html = "https://x.com/vali/status/1", "<html><head><title>Vali açıkladı https://t.co/x</title></head><body>"
+        with mock.patch.object(vc, "urlopen", lambda req, timeout: FakeResponse((html + PROSE).encode(), "text/html")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            vc.cmd_fetch(self.run, [url])
+        self.section("s9", f"## Dokuz\n\nVali açıkladı [{url}].")
+        text = self.assemble()
+        self.assertIn(f"\n[3] Vali açıkladı {url}\n", text)
+        self.assertEqual(vc.parse_report(text)[1][3], url)
+        self.assertEqual(vc.parse_report("## S\n\n[1] A https://t.co/x https://a.org/real\n")[1], {1: "https://a.org/real"})
+
+    def test_assemble_always_writes_the_assembled_copy(self):
+        first = self.assemble()
+        self.assertEqual((self.run / "report.assembled.md").read_text(encoding="utf-8"), first)
+        vc.write_text(self.run / "report.md", first.replace("Kısa cevap", "Akıcı kısa cevap"))  # rewritten, no copy step
+        self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x]. Takip.")
+        self.assertIn("Akıcı kısa cevap", self.assemble())
+        self.assertIn("Takip.", (self.run / "report.assembled.md").read_text(encoding="utf-8"))
+        (self.run / "report.assembled.md").unlink()  # a report.md with no assembled copy is kept too
+        self.assertIn("Akıcı kısa cevap", self.assemble())
 
     def test_url_with_parentheses_keeps_its_evidence(self):
         url = "https://tr.wikipedia.org/wiki/Mudanya_(ilçe)"
@@ -1017,6 +1147,73 @@ class FetchTests(RunCase):
         self.assertLess(time.time() - start, 5)
         self.assertTrue(lock.exists())
 
+    def test_fresh_lock_without_a_holder_delays_only_up_to_the_cap(self):
+        url = "https://example.org/held"
+        lock = self.run / "pages" / (hashlib.sha1(vc.norm_url(url).encode("utf-8")).hexdigest()[:12] + ".lock")
+        lock.touch()  # left a moment ago by a fetch that was killed
+        start = time.time()
+        with mock.patch.object(vc, "LOCK_WAIT", 0.5), mock.patch.object(vc, "LOCK_STALE", 3600):
+            lines = self.fetch([url], lambda req, timeout: FakeResponse(PROSE.encode(), "text/html"))
+        self.assertTrue(0.5 <= time.time() - start < 5, time.time() - start)
+        self.assertTrue(lines[0].startswith("ok "), lines)
+        self.assertTrue(lock.exists())  # not this fetch's lock, so it is left alone
+        self.assertEqual((vc.LOCK_WAIT, vc.LOCK_STALE), (30, 60))
+
+    def test_download_deadline_spans_retries_and_slow_bodies(self):
+        calls, sleeps = [], []
+
+        def busy(req, timeout):
+            calls.append(timeout)
+            raise http_error(req.full_url, 503)
+
+        class Trickle(FakeResponse):
+            def read(self, size=-1):
+                time.sleep(0.05)
+                return b"x" * 100
+
+        with mock.patch.object(vc, "DEADLINE", 1), mock.patch.object(vc, "sleep", sleeps.append):
+            lines = self.fetch(["https://a.org/busy"], busy)
+        self.assertTrue(lines[0].startswith("http-503 "), lines)
+        self.assertEqual((len(calls), sleeps), (1, []))  # a 2 s retry wait would pass the deadline
+        start = time.time()
+        with mock.patch.object(vc, "DEADLINE", 0.3):
+            lines = self.fetch(["https://a.org/slow"], lambda req, timeout: Trickle(b"", "text/html"))
+        self.assertLess(time.time() - start, 3)
+        self.assertTrue(lines[0].startswith("TimeoutError"), lines)
+        self.assertEqual(vc.DEADLINE, 30)
+
+    def test_save_leaves_no_temp_file_when_the_move_fails(self):
+        def stuck(src, dst):
+            raise PermissionError("in use")
+
+        with mock.patch.object(vc.os, "replace", stuck), mock.patch.object(vc.time, "sleep", lambda s: None), \
+                self.assertRaises(PermissionError):
+            vc.save(self.run / "pages" / "a.txt", "body")
+        self.assertEqual(list((self.run / "pages").iterdir()), [])
+
+    def test_unreadable_snapshot_is_skipped(self):
+        self.page(URL1, "Fiyat 2,61 TL")
+        self.page(URL2, "Nüfus 300")
+        real = vc.snap_head
+
+        def flaky(path):
+            if path.name == "p0.txt":
+                raise PermissionError("being replaced by another fetch")
+            return real(path)
+
+        with mock.patch.object(vc, "snap_head", flaky):
+            self.assertEqual(list(vc.load_snapshots(self.run)), [vc.norm_url(URL2)])
+
+    def test_find_reads_the_body_not_the_layout_copy(self):
+        self.page("https://x.org/doc.pdf", "Baraj doluluk oranı yüzde 41 oldu.")
+        stem = next((self.run / "pages").glob("*.txt")).stem
+        (self.run / "pages" / f"{stem}.layout.txt").write_text("Baraj   doluluk   oranı   yüzde 41", encoding="utf-8")
+        self.assertIn("Baraj   doluluk", vc.load_snapshots(self.run)["x.org/doc.pdf"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            vc.cmd_find(self.run, "baraj")
+        self.assertEqual(buf.getvalue().count("araj"), 1, buf.getvalue())
+
     def test_save_uses_a_private_temp_name_and_retries_permission_errors(self):
         calls, real, target = [], os.replace, self.run / "pages" / "a.txt"
 
@@ -1168,11 +1365,13 @@ class FetchTests(RunCase):
         self.assertTrue(lines[0].startswith("ok "), lines)
         self.assertTrue(lines[1].startswith("boilerplate "), lines)
 
-    def pdf_fetch(self, which, body="Reading order paragraph about water tariffs in the city. " * 12):
+    def pdf_fetch(self, which, body="Reading order paragraph about water tariffs in the city. " * 12, hook=None):
         raw, runs = b"%PDF-1.4 fake", []
 
         def fake_run(args, **kwargs):
             runs.append(args)
+            if hook:
+                hook(args, kwargs)
             text = "LAYOUT col1     col2\n" if "-layout" in args else ""
             Path(args[-1]).write_text(text + body, encoding="utf-8")
 
@@ -1180,6 +1379,23 @@ class FetchTests(RunCase):
                 mock.patch.object(vc.subprocess, "run", fake_run):
             lines = self.fetch(["https://x.org/doc.pdf"], lambda req, timeout: FakeResponse(raw, "application/pdf"))
         return lines, runs, raw
+
+    def test_pdf_runs_have_short_timeouts_and_keep_the_lock_fresh(self):
+        lock = self.run / "pages" / (hashlib.sha1(b"x.org/doc.pdf").hexdigest()[:12] + ".lock")
+        seen = []
+
+        def hook(args, kwargs):
+            seen.append((kwargs["timeout"], time.time() - lock.stat().st_mtime))
+            os.utime(lock, (time.time() - 3600,) * 2)  # as if this conversion had run for an hour
+            if "-layout" in args:
+                raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+        lines, runs, _ = self.pdf_fetch("pdftotext", hook=hook)
+        self.assertTrue(lines[0].startswith("ok "), lines)
+        self.assertEqual([t for t, _ in seen], [50, 30])
+        self.assertTrue(all(age < 5 for _, age in seen), seen)  # touched before each run
+        self.assertEqual(list((self.run / "pages").glob("*.layout.txt")), [])  # a timed-out layout run is skipped
+        self.assertFalse(lock.exists())
 
     def test_pdf_reading_order_and_layout_copy(self):
         lines, runs, _ = self.pdf_fetch("pdftotext")
@@ -1210,6 +1426,86 @@ class FetchTests(RunCase):
         self.assertTrue(lines[0].startswith("pdf-saved ") and ".pdf" in lines[0], lines)
         self.assertEqual([p.read_bytes() for p in (self.run / "pages").glob("*.pdf")], [raw])
         self.assertEqual(vc.load_snapshots(self.run), {})
+
+
+class LocalServer:
+    """An HTTP server on 127.0.0.1 that counts GETs per path; a path in `hold` waits until `release` is set."""
+
+    def __init__(self):
+        self.counts, self.lock, self.hold = collections.Counter(), threading.Lock(), set()
+        self.seen, self.release, server = threading.Event(), threading.Event(), self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                with server.lock:
+                    server.counts[self.path] += 1
+                if self.path in server.hold:
+                    server.seen.set()
+                    server.release.wait(60)
+                body = (f"<p>Page {self.path}</p>" + PROSE).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                with contextlib.suppress(OSError):
+                    self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.release.set()
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+class ProcessTests(RunCase):
+    """Real `fetch` processes against a local server: Review Focus 3 across processes, and a killed fetch."""
+
+    def setUp(self):
+        super().setUp()
+        self.server = LocalServer()
+        self.env = {**os.environ, "NO_PROXY": "*", "no_proxy": "*"}
+
+    def tearDown(self):
+        self.server.close()
+        super().tearDown()
+
+    def spawn(self, *urls):
+        return subprocess.Popen([sys.executable, str(SCRIPT), "fetch", str(self.run), *urls], env=self.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def test_two_processes_fetch_overlapping_urls(self):
+        urls = [f"{self.server.url}/p{i}" for i in range(18)]
+        procs = [self.spawn(*urls[:12]), self.spawn(*urls[6:])]
+        outs, errs = zip(*[(b.decode("utf-8") for b in proc.communicate(timeout=120)) for proc in procs])
+        self.assertEqual([proc.returncode for proc in procs], [0, 0], errs)
+        self.assertEqual(dict(self.server.counts), {f"/p{i}": 1 for i in range(18)})
+        self.assertEqual([line[:3] for out in outs for line in out.splitlines()], ["ok "] * 24, outs)
+        self.assertEqual(len(vc.load_snapshots(self.run)), 18)
+        self.assertEqual([p.name for p in (self.run / "pages").iterdir() if not p.name.endswith(".txt")], [])
+
+    def test_killed_fetch_delays_a_retry_only_up_to_the_cap(self):
+        url = f"{self.server.url}/slow"
+        self.server.hold.add("/slow")
+        proc = self.spawn(url)
+        self.assertTrue(self.server.seen.wait(60))  # the fetch holds the URL's lock and waits for the body
+        proc.kill()
+        proc.communicate(timeout=60)
+        self.assertEqual(len(list((self.run / "pages").glob("*.lock"))), 1)
+        self.server.hold.clear()
+        self.server.release.set()
+        out, start = io.StringIO(), time.time()
+        with mock.patch.object(vc, "LOCK_WAIT", 1), mock.patch.dict(os.environ, {"no_proxy": "*"}), \
+                contextlib.redirect_stdout(out):
+            vc.cmd_fetch(self.run, [url])
+        self.assertLess(time.time() - start, 15)
+        self.assertTrue(out.getvalue().startswith("ok "), out.getvalue())
+        self.assertIn(vc.norm_url(url), vc.load_snapshots(self.run))
 
 
 if __name__ == "__main__":
