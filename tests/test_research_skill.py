@@ -352,12 +352,15 @@ class ResearchSkillTests(unittest.TestCase):
         self.assertNotIn("checklist", reuse.lower())
 
     def test_assemble_keeps_an_edited_report(self):
-        # assemble writes report.assembled.md and keeps a report.md edited after assembly, so nothing is copied by
-        # hand, and a late follow-up goes through assemble and diff instead of a hand edit
+        # assemble writes report.assembled.md itself and keeps a report.md edited after assembly. A late follow-up goes
+        # into report.md by hand: a re-assembly numbers sources by first use, so one new source shifts every later
+        # number, and the diff against the rewrite listed 86 problems for one new figure (verifier, 8 sections)
         step = body_line("4. **Assemble.**")
         self.assertNotIn("copy report.md", step)
         self.assertNotIn("undo the rewrite", step)
-        self.assertIn("After a late follow-up, fold it in, run assemble and diff again", step)
+        self.assertIn("After a late follow-up, fold it into the drafts and into report.md by hand, numbering new sources "
+                      "after the last one.", step)
+        self.assertNotIn("run assemble and diff again", step)
         self.assertIn("a report.md edited after assembly is kept", body_line("- `assemble "))
 
     def test_rejected_values_in_prose(self):

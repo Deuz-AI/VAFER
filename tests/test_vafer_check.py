@@ -1036,6 +1036,10 @@ class AssembleTests(RunCase):
         self.assertEqual(self.assemble(), rewrite)
         self.assertIn("Takip iki.", (self.run / "report.assembled.md").read_text(encoding="utf-8"))
         self.assertTrue(self.out.startswith("report.assembled.md: ") and "report.md was edited" in self.out, self.out)
+        # a re-assembly numbers sources by first use, so a new one shifts every later number: a diff against the kept
+        # report.md lists each shifted citation (verifier: 86 problems for one new figure), and the change goes in by hand
+        self.assertIn("so it is kept: carry these changes into it by hand)", self.out)
+        self.assertNotIn("diff", self.out)
 
     def test_urls_with_apostrophe_comma_or_escapes_roundtrip(self):
         apos, comma = "https://tr.wikipedia.org/wiki/Türkiye'nin_illeri", "https://en.wikipedia.org/wiki/Washington,_D.C."

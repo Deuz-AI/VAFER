@@ -808,7 +808,7 @@ def cmd_assemble(run: Path, title: str = "Sources") -> int:
     for path in [copy] if edited else [out, copy]:
         write_text(path, text)
     print(f"{(copy if edited else out).name}: {len(parts)} sections, {len(body.split())} body words, {len(urls)} sources"
-          + " (report.md was edited after assembly, so it is kept: carry these changes into it, then run diff)" * edited)
+          + " (report.md was edited after assembly, so it is kept: carry these changes into it by hand)" * edited)
     return 0
 
 def doc_items(text: str) -> tuple:  # numbers, citations and 4+ word quotes as (keys, label, unit); sources; sentences
