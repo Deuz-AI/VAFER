@@ -3,9 +3,15 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import re
+import shlex
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from skillcheck import ALLOWED_FRONTMATTER, REPOSITORY, SKILLS, split_skill, top_level_fields
 
@@ -27,6 +33,9 @@ KEY_RULES = (
 REFERENCE_SET = ["briefs.md", "hosts.md", "researcher.md", "reuse.md"]
 MAX_BRIEF_WORDS = 150
 RETIRED_TERMS = ("editor", "gap wave", "report.before-edit", "adjudicator")
+COMMANDS = ("fetch", "find", "check", "assemble", "diff")
+URLS = ("https://example.org/law?No=5216&Tur=1", "https://example.org/b?x=1&y=2")  # `&` ends an unquoted word
+HEADING = "Fuentes y notas"
 
 
 def reference(name: str) -> str:
@@ -50,6 +59,26 @@ def body_line(prefix: str) -> str:
 def under(text: str, heading: str) -> str:
     """The text under a `## ` heading, up to the next `## ` heading."""
     return text.split(f"\n{heading}\n")[1].split("\n## ")[0]
+
+
+def documented_forms() -> list[tuple[str, str]]:
+    """(file, form) for every backticked command form in SKILL.md and the references, without `{cmd} `."""
+    pattern = re.compile(r"`(?:\{cmd\} )?((?:%s) [^`]+)`" % "|".join(COMMANDS))
+    return [(path.name, m.group(1)) for path in [SKILL_DIR / "SKILL.md", *sorted((SKILL_DIR / "references").glob("*.md"))]
+            for m in pattern.finditer(path.read_text(encoding="utf-8"))]
+
+
+def shell_words(line: str) -> list[str]:
+    """The words Git Bash or PowerShell passes: an unquoted space, `&` or `|` ends a word."""
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    return list(lexer)
+
+
+def vafer_check():
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    import vafer_check as module
+    return module
 
 
 class ResearchSkillTests(unittest.TestCase):
@@ -132,7 +161,7 @@ class ResearchSkillTests(unittest.TestCase):
             self.assertIn(command, body)
 
     def test_rewrite_keeps_markers(self):
-        # check finds the disagreement table only by <!-- vafer:end -->; diff does not notice a dropped marker
+        # check finds the disagreement table only by <!-- vafer:end -->, so the rewrite keeps the marker lines
         rewrite = [line for line in split_skill(SKILL_DIR)[1].splitlines() if "rewrite report.md" in line]
         self.assertTrue(rewrite)
         for line in rewrite:
@@ -199,7 +228,7 @@ class ResearchSkillTests(unittest.TestCase):
 
     def test_find_names_urls(self):
         # without URLs, find reads every snapshot in the run, other researchers' pages included
-        self.assertIn('{cmd} find <run> "a|b|c" <url>...', reference("researcher.md"))
+        self.assertIn('{cmd} find "<run>" "a|b|c" "<url>"...', reference("researcher.md"))
 
     def test_section_brief_names_tier(self):
         # the search budget depends on the tier (Deep 16), and only the brief can tell a researcher the tier
@@ -224,8 +253,8 @@ class ResearchSkillTests(unittest.TestCase):
                 self.assertTrue(path.startswith('"') and path.endswith('"'), f"{name}: {path}")
 
     def test_permission_rule_anchored_to_script(self):
-        # `python* *vafer_check.py*` also allows `python -c "<code>" vafer_check.py`; Claude Code matches the text
-        # before the first * as written, so the rule names the interpreter (py -3 too) and the quoted script path
+        # `python* *vafer_check.py*` also allows `python -c "<code>" vafer_check.py`: Claude Code matches the whole
+        # command, with * for any text, so the rule names the interpreter (py -3 too) and the quoted script path
         hosts = reference("hosts.md")
         rule = next(line for line in hosts.splitlines() if line.startswith("- Permissions:"))
         self.assertIn('`Bash(<python> "<absolute skill folder>/scripts/vafer_check.py" *)`', rule)
@@ -321,6 +350,123 @@ class ResearchSkillTests(unittest.TestCase):
         self.assertIn("## Refreshing a run", reuse)
         self.assertNotIn("## On a hit", reuse)
         self.assertNotIn("checklist", reuse.lower())
+
+    def test_assemble_keeps_an_edited_report(self):
+        # assemble writes report.assembled.md and keeps a report.md edited after assembly, so nothing is copied by
+        # hand, and a late follow-up goes through assemble and diff instead of a hand edit
+        step = body_line("4. **Assemble.**")
+        self.assertNotIn("copy report.md", step)
+        self.assertNotIn("undo the rewrite", step)
+        self.assertIn("After a late follow-up, fold it in, run assemble and diff again", step)
+        self.assertIn("a report.md edited after assembly is kept", body_line("- `assemble "))
+
+    def test_rejected_values_in_prose(self):
+        # the v0.0.4 judge errors C12 and C15 were prose sentences that rejected a value nobody opened
+        rule = body_line("9. ")
+        self.assertIn("Open the page before you reject a value.", rule)
+        self.assertIn("in a B cell or in prose cites its own page, or takes a †", rule)
+        self.assertNotIn("Every B cell carries", split_skill(SKILL_DIR)[1])  # said once, in rule 9
+        self.assertIn("takes a † in prose", under(reference("researcher.md"), "## Ruling"))
+
+    def test_search_cap_has_an_action(self):
+        # Deep at 10x16 searches plus follow-ups passed the 200-search session cap, and the line gave no action
+        self.assertIn("tally the notes' `Searches:` lines; near 170, spawn no more follow-ups", body_line("- Deep and Ultra"))
+        self.assertIn("Searches: about {n}", fenced_briefs()["Section researcher"])
+        self.assertIn("but 12 when a run has more than 8 sections", reference("briefs.md"))
+        self.assertIn("unless your brief names a number", reference("researcher.md"))
+        self.assertIn("refills at about 100 per hour", reference("hosts.md"))
+
+    def test_followup_brief_items(self):
+        # a follow-up is not a section: its budget is per item, each item gets a notes file, and an open row has a value
+        brief = fenced_briefs()["Follow-up"]
+        for text in ("about 8 searches per item", "one file per item", "for an open row, the value found"):
+            self.assertIn(text, brief)
+
+    def test_conflicts_by_scope_rounding_and_rung(self):
+        # C12 compared villages of one district with two; C15 was one figure and its rounding; a governorship page
+        # retelling a 1930 event was ranked as an official record
+        ruling = under(reference("researcher.md"), "## Ruling")
+        for text in ("only when place, period, unit and scope match", "whose verdict is \"both, by definition\"",
+                     "keep the precise one and say so", "retelling a past event is a secondary account: press"):
+            self.assertIn(text, ruling)
+        reading = under(reference("researcher.md"), "## Searching and reading")
+        self.assertIn("If it is blocked, a page that quotes it verbatim is a lead receipt; mark the value †", reading)
+
+    def test_find_line_numbers_lead_to_the_snapshot(self):
+        # find cuts a long line with …; its numbers are the snapshot file's, so the full span is one read away
+        self.assertIn("read that line in `pages/<file>.txt`", under(reference("researcher.md"), "## Receipts"))
+
+    def test_lead_paths_without_a_shell_or_folder(self):
+        # the lookup rule sat under Windows, though rg can be missing anywhere; without a shell, assemble had no stand-in
+        hosts = reference("hosts.md")
+        self.assertIn("no earlier run", under(hosts, "## Reuse lookup"))
+        self.assertNotIn("rg", under(hosts, "## Windows"))
+        self.assertIn("see Reuse lookup in `hosts.md`", reference("reuse.md"))
+        no_shell = next(line for line in hosts.splitlines() if line.startswith("- **E, no shell:**"))
+        for marker in ("<!-- vafer:end -->", "<!-- vafer:sources -->", "manual check"):
+            self.assertIn(marker, no_shell)
+        self.assertIn("Without a shell, use mode E in `references/hosts.md`.", split_skill(SKILL_DIR)[1])
+
+    def test_review_leftovers(self):
+        # row states live in plan.md for a refresh; the Standard cap counts every agent; the plan header has no as_of;
+        # Bash rules match the whole command; a table variant ends in one section file; a refresh downloads again
+        body = split_skill(SKILL_DIR)[1]
+        self.assertIn("mark its rows in plan.md", body)
+        self.assertIn("8 agents in all, gap-finder and respawns included", body)
+        self.assertNotIn("Codex keeps at most 6 open", body)  # hosts.md's event loop says it
+        self.assertNotIn("as_of", reference("reuse.md"))
+        self.assertNotIn("before the first `*`", reference("hosts.md"))
+        self.assertIn("A `*` stands for any text", reference("hosts.md"))
+        self.assertNotIn("For recent topics", reference("hosts.md"))
+        self.assertIn("Join the rows into one table in `sections/<id>.md`", under(reference("briefs.md"),
+                                                                                 "## Table variant (lists of about eight items or more)"))
+        self.assertIn('--refresh "<url>"', under(reference("reuse.md"), "## Refreshing a run"))
+
+    def test_documented_command_forms_parse(self):
+        # assemble changed under the text once, and only a review noticed. Every documented form, with its optional
+        # parts in and out, reaches its command through the real parser with the run folder, URLs and terms whole:
+        # a run path with a space or a URL with `&` keeps only with its quotes, in Git Bash and in PowerShell
+        vc, forms, calls = vafer_check(), documented_forms(), []
+        self.assertEqual({form.split()[0] for _, form in forms}, set(COMMANDS))
+        for command in COMMANDS:  # and every option the parser has is documented
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit):
+                vc.main([command, "--help"])
+            for option in set(re.findall(r"--[a-z][a-z-]+", out.getvalue())) - {"--help"}:
+                self.assertTrue(any(f.split()[0] == command and option in f for _, f in forms), f"{command} {option}")
+        stubs = {"cmd_fetch": 0, "cmd_find": 0, "cmd_assemble": 0, "check_section": [], "diff": [],
+                 "check": {"summary": "", "mix": "", "words": 0}}
+        stub = lambda name: lambda *args: calls.append((name, args)) or stubs[name]  # noqa: E731
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / "run folder"
+            (run / "sections").mkdir(parents=True)
+            for name, text in (("report.assembled.md", b"old\n"), ("report.md", b"new\n"), ("sections/s1.md", b"## S1\n")):
+                (run / name).write_bytes(text)
+            values = {"<run>": run.as_posix(), "<old>": (run / "report.assembled.md").as_posix(),
+                      "<new>": (run / "report.md").as_posix(), "<id>": "s1", "<url>": URLS[0], "<url2>": URLS[1]}
+            for name, form in forms:
+                for variant in (re.sub(r"\[([^\[\]]*)\]", r"\1", form), re.sub(r"\s*\[[^\[\]]*\]", "", form)):
+                    line = re.sub(r'("?)<url>\1\.\.\.', r"\1<url>\1 \1<url2>\1", variant)  # `<url>...`: two URLs
+                    line = re.sub(r"<[^<>]+>", lambda m: values.get(m.group(0), HEADING), line)
+                    urls, has = [u for u in URLS if u in line], lambda option: option in variant.split()
+                    want = {"fetch": ("cmd_fetch", (run, urls, "a|b|c" if has("--find") else None, has("--refresh"))),
+                            "find": ("cmd_find", (run, "a|b|c", urls)),
+                            "check": ("check_section", (run, "s1")) if has("--section") else ("check", (run,)),
+                            "assemble": ("cmd_assemble", (run, HEADING if has("--title") else "Sources")),
+                            "diff": ("diff", ("old\n", "new\n"))}[variant.split()[0]]
+                    calls.clear()
+                    with self.subTest(file=name, form=variant), contextlib.ExitStack() as stack:
+                        for fn in stubs:
+                            stack.enter_context(mock.patch.object(vc, fn, stub(fn)))
+                        err = io.StringIO()
+                        stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                        stack.enter_context(contextlib.redirect_stderr(err))
+                        try:
+                            code = vc.main(shell_words(line))
+                        except SystemExit as exc:  # the parser refused the words
+                            code = exc.code
+                        self.assertEqual((code, calls), (0, [want]), err.getvalue())
 
 
 if __name__ == "__main__":

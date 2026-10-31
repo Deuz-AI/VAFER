@@ -1,6 +1,6 @@
 # Briefs
 
-A subagent sees only its brief and the files it names, so put everything else in the brief. Send all of a launch's briefs in one message. On Claude Code, use fresh `general-purpose` subagents, not forks. `{cmd}` is the full command, `<python> "<absolute skill folder>/scripts/vafer_check.py"`, with the path in double quotes. `{id}` is lowercase, such as `s1` or `f1`.
+A subagent sees only its brief and the files it names, so put everything else in the brief. Send all of a launch's briefs in one message. On Claude Code, use fresh `general-purpose` subagents, not forks. `{cmd}` is the full command, `<python> "<absolute skill folder>/scripts/vafer_check.py"`, with the path in double quotes. `{id}` is lowercase, such as `s1` or `f1`. `{n}` is the tier's search count in `researcher.md`, but 12 when a run has more than 8 sections, so the run stays under the search cap in `hosts.md`.
 
 ## Gap-finder
 
@@ -22,7 +22,7 @@ Reply with 8-12 items, one line each: the item, why it matters, the record that 
 Read {skill folder}/references/researcher.md first and follow it.
 Today is {date}. Question: {question, verbatim}. Reader: {who, in which language}.
 Your section: {id} {title}. Rows, each with its settling record and [prior] terms: {rows}.
-Tier: {tier}. Word budget: {words}. Others cover: {one line per other section}; do not duplicate them.
+Tier: {tier}. Searches: about {n}. Word budget: {words}. Others cover: {one line per other section}; do not duplicate them.
 Start with: {2-4 short queries, in the languages of the best sources}.
 Run folder: {run}. Command: {cmd}.
 Write receipts to {run}/notes/{id}.md and the section to {run}/sections/{id}.md, starting with ## {title} and cited as [URL].
@@ -45,17 +45,17 @@ Spawn one as soon as a trigger in SKILL.md step 3 appears. In Ultra, also spawn 
 ```text
 Read {skill folder}/references/researcher.md first and follow it.
 Today is {date}. Question: {question, verbatim}. Reader: {who, in which language}. Tier: {tier}.
-Settle one item: {claim or row}.
+Settle each item, with about 8 searches per item: {one claim or row, or a few}.
 What is known: {A: statement, source, rung; B: statement, source, rung or "not opened"}.
 Open the page behind any value you would reject.
-Run folder: {run}. Command: {cmd}. Write receipts to {run}/notes/{id}.md. Write no section file.
+Run folder: {run}. Command: {cmd}. Write receipts to {run}/notes/{id}.md, one file per item. Write no section file.
 If you have no web search tool, reply only: NO_WEB
-Reply in at most 150 words: the verdict (A, B, both partly, both by definition, or unresolved), the deciding receipt lines, and one sentence a reader can understand.
+Reply in at most 150 words, per item: the verdict (A, B, both partly, both by definition, or unresolved; for an open row, the value found), the deciding receipt lines, and one sentence a reader can understand.
 ```
 
 ## Table variant (lists of about eight items or more)
 
-Build the frame before filling it: find the record that enumerates the items plus one independent route to the same set, and write the frame in plan.md, one row per item and one column per attribute. The gap-finder's frame is a starting point. Give each researcher a batch of rows instead of a section: "Your rows: {items}. Columns: {attributes, with unit and period}. Fill every cell with a value and its receipt, 'not found (queries)' or 'n/a (reason)'. Report items missing from the frame." Run passes through unused routes until one adds no item, then compare the count with any total the sources state.
+Build the frame before filling it: find the record that enumerates the items plus one independent route to the same set, and write the frame in plan.md, one row per item and one column per attribute. The gap-finder's frame is a starting point. Give each researcher a batch of rows instead of a section. Replace the brief's Your section line with "Your rows: {items}. Columns: {attributes, with unit and period}. Fill every cell with a value and its receipt, 'not found (queries)' or 'n/a (reason)'. Report items missing from the frame.", and its Write line with "Write receipts, then your rows as table lines cited [URL], to {run}/notes/{id}.md. Write no section file." Run passes through unused routes until one adds no item, then compare the count with any total the sources state. Join the rows into one table in `sections/<id>.md` before you assemble.
 
 ## Variants
 
