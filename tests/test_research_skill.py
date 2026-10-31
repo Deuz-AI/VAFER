@@ -29,6 +29,24 @@ MAX_BRIEF_WORDS = 150
 RETIRED_TERMS = ("editor", "gap wave", "report.before-edit", "adjudicator")
 
 
+def reference(name: str) -> str:
+    return (SKILL_DIR / "references" / name).read_text(encoding="utf-8")
+
+
+def fenced_briefs() -> dict[str, str]:
+    """The ```text brief under each `## ` heading of briefs.md, keyed by the heading."""
+    out = {}
+    for chunk in re.split(r"^## ", reference("briefs.md"), flags=re.M)[1:]:
+        heading, _, rest = chunk.partition("\n")
+        if m := re.search(r"```text\n(.*?)```", rest, re.S):
+            out[heading.strip()] = m.group(1)
+    return out
+
+
+def body_line(prefix: str) -> str:
+    return next(line for line in split_skill(SKILL_DIR)[1].splitlines() if line.lstrip().startswith(prefix))
+
+
 class ResearchSkillTests(unittest.TestCase):
     def test_frontmatter_uses_spec_fields_only(self):
         fields = top_level_fields(split_skill(SKILL_DIR)[0])
@@ -150,6 +168,78 @@ class ResearchSkillTests(unittest.TestCase):
         text = (SKILL_DIR / "references" / "reuse.md").read_text(encoding="utf-8")
         self.assertIn("from:", text)
         self.assertIn("[brainstorm]", text)
+
+    def test_rewrite_lets_cut_repeats_go(self):
+        # diff pairs items one to one, so each repeat the rewrite cuts is listed as missing; restoring every
+        # listed item would put back the repetition that made the assembly lose the readability gate
+        rewrite = body_line("4. **Assemble.**")
+        self.assertIn("a repeat may go", rewrite)
+        self.assertIn("unless it is such a cut repeat", rewrite)
+        self.assertNotIn("restore what it lists", rewrite)
+
+    def test_flags_answered_in_check_md_and_rechecked(self):
+        # evidence.md's open count changes only when check runs again; a † edit changes the excerpt
+        check = body_line("5. **Check.**")
+        self.assertIn("disposition column", check)
+        self.assertIn("again until it reports 0 open", check)
+        body = split_skill(SKILL_DIR)[1]
+        self.assertIn("0 open flags", body)
+        self.assertNotRegex(body, r"\b[1-9]\d* open flags")  # a finished run has none
+
+    def test_followups_write_no_section(self):
+        # check --section exits 2 on a missing draft, and assemble appends a stray draft to report.md
+        self.assertIn("write no section file", fenced_briefs()["Follow-up"].lower())
+        before_reply = reference("researcher.md").split("## Before you reply")[1].split("\n## ")[0]
+        self.assertIn("If you wrote a section draft", before_reply)
+
+    def test_find_names_urls(self):
+        # without URLs, find reads every snapshot in the run, other researchers' pages included
+        self.assertIn('{cmd} find <run> "a|b|c" <url>...', reference("researcher.md"))
+
+    def test_section_brief_names_tier(self):
+        # the search budget depends on the tier (Deep 16), and only the brief can tell a researcher the tier
+        self.assertIn("Tier: {tier}", fenced_briefs()["Section researcher"])
+        self.assertIn("16 in Deep and Ultra", reference("researcher.md"))
+
+    def test_skill_routes_handoff_to_reuse(self):
+        # handoff.md lives under .vafer/brainstorm, so the plan.md lookup never leads to the handoff rule
+        body = split_skill(SKILL_DIR)[1]
+        reuse = body.split("## Reuse")[1].split("\n## ")[0]
+        self.assertIn("(handoff:", reuse)
+        self.assertIn("references/reuse.md", reuse)
+        self.assertIn("handoff", body_line("- `references/reuse.md`"))
+
+    def test_command_path_quoted(self):
+        # an unquoted skill path with a space breaks every command in PowerShell and Git Bash
+        for name in ("SKILL.md", "references/briefs.md", "references/hosts.md"):
+            text = (SKILL_DIR / name).read_text(encoding="utf-8")
+            paths = re.findall(r".?<absolute skill folder>/scripts/vafer_check\.py.?", text)
+            self.assertTrue(paths, name)
+            for path in paths:
+                self.assertTrue(path.startswith('"') and path.endswith('"'), f"{name}: {path}")
+
+    def test_permissions_cover_py_launcher(self):
+        self.assertIn("Bash(py *vafer_check.py*)", reference("hosts.md"))
+
+    def test_background_spawns_end_the_turn(self):
+        # Claude Code spawns run in the background; an interactive lead cannot wait for them
+        self.assertIn("end your turn", reference("hosts.md"))
+
+    def test_receipt_format_lives_in_researcher_md(self):
+        # one copy of the receipt rules; a table span joins header and row with … so it matches its snapshot
+        self.assertNotIn("primary|official|scholarly|press|lead", split_skill(SKILL_DIR)[1])
+        self.assertIn("primary|official|scholarly|press|lead", reference("researcher.md"))
+        self.assertIn("joined by `…`", reference("researcher.md"))
+
+    def test_lookup_example_uses_alternation(self):
+        # rg matches a multi-word pattern as one phrase, so "water tariff istanbul" misses "istanbul water tariff"
+        example = re.search(r'rg -i -l "([^"]+)"', split_skill(SKILL_DIR)[1]).group(1)
+        self.assertIn("|", example)
+
+    def test_no_web_and_standard_ceiling(self):
+        body = split_skill(SKILL_DIR)[1]
+        self.assertIn("On NO_WEB, switch to mode B", body)
+        self.assertIn("8 agents in all", body)
 
 
 if __name__ == "__main__":
