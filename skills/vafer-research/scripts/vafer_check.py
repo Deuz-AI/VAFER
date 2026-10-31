@@ -40,11 +40,11 @@ MONTHS = ("ocak şubat mart nisan mayıs haziran temmuz ağustos eylül ekim kas
 MON = "|".join(MONTHS)
 ORDS = ("first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth "
         "fifteenth sixteenth seventeenth eighteenth nineteenth twentieth twenty-first").split()
-# one-token figures: ISO, dotted and written dates; Roman or ordinal centuries; clock times (accepted in `special`)
+# one-token figures: ISO, dotted and written (also yearless) dates; Roman or ordinal centuries; clock times (`special`)
 SPECIAL = re.compile(r"(?<![\w.,:])(?:(?P<iy>\d{4})-(?P<im>\d{1,2})-(?P<id>\d{1,2})"
                      r"|(?P<dd>\d{1,2})[./](?P<dm>\d{1,2})[./](?P<dy>\d{4})"
-                     rf"|(?P<td>\d{{1,2}})(?:\.|st|nd|rd|th)?\s+(?:of\s+)?(?P<tm>{MON})\s+(?P<ty>\d{{4}})"
-                     rf"|(?P<em>{MON})\s+(?P<ed>\d{{1,2}})(?:st|nd|rd|th)?,?\s+(?P<ey>\d{{4}})"
+                     rf"|(?P<td>\d{{1,2}})(?:\.|st|nd|rd|th)?\s+(?:of\s+)?(?P<tm>{MON})(?![^\W\d_])(?:,?\s+(?P<ty>\d{{4}}))?"
+                     rf"|(?P<em>{MON})\s+(?P<ed>\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s+(?P<ey>\d{{4}}))?"
                      rf"|(?P<c>\d{{1,2}}|[IVXLC]{{1,6}}|{'|'.join(ORDS[::-1])})(?:\.|st|nd|rd|th)?[\s-]*"
                      r"(?:yüzyıl|yy\b|century|centuries)"
                      r"|(?P<h>[01]?\d|2[0-3])(?P<sep>[:.])(?P<mi>[0-5]\d))(?!\d)", re.I)
@@ -53,6 +53,7 @@ SEVERITY = {"equation-wrong": "high", "b-unopened": "high", "dangling": "high", 
             "label-leak": "medium"}  # every other kind is low
 HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 SOURCES_MARK, END_MARK = "<!-- vafer:sources -->", "<!-- vafer:end -->"
+PLAN_ID = re.compile(r"^#{2,4}\s+([A-Za-z]{1,3}\d{1,2})\b")  # a plan.md heading's section id
 COMMENT = re.compile(r"^\s*<!--.*-->\s*$")
 SOURCE_ENTRY = re.compile(r"^\s*(?:[-*]\s*)?\[(\d+)\]:?\s+(.*)$|^\s*(\d+)\.\s+(.*)$")
 CHECK_LINE = re.compile(r"(?P<pre>Source check[*_]*[ \t]*:[*_]*[ \t]*)(?P<val>[^\r\n]*)", re.I)
@@ -356,7 +357,7 @@ def roman(s: str) -> int:
     vals = [{"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}[c] for c in s.upper()]
     return sum(-v if i + 1 < len(vals) and v < vals[i + 1] else v for i, v in enumerate(vals))
 def special(m, text: str):
-    """Key of a one-token figure ("date 1923-10-29", "century 16", "time 3:02"), or None to read it as numbers."""
+    """Key of a one-token figure ("date 1923-10-29", yearless "date --10-29", "century 16", "time 3:02") or None."""
     g = m.groupdict()
     if g["c"]:
         c = g["c"].lower()
@@ -367,9 +368,10 @@ def special(m, text: str):
               or re.match(r"['’]?[dt][ae]\b|\s*[ap]\.?m\b", text[m.end():], re.I))
         return f"time {int(g['h'])}:{g['mi']}" if ok else None
     y, mo, d = next((g[a], g[b], g[c]) for a, b, c in (("iy", "im", "id"), ("dy", "dm", "dd"), ("ty", "tm", "td"),
-                                                        ("ey", "em", "ed")) if g[a])
+                                                        ("ey", "em", "ed")) if g[b])
+    cap = y or mo[0].isupper()  # a yearless date needs a capital month: "5 may" is a verb
     mo = int(mo) if mo.isdigit() else [tr_fold(x) for x in MONTHS].index(tr_fold(mo)) % 12 + 1
-    return f"date {int(y)}-{mo:02}-{int(d):02}" if 1 <= mo <= 12 and 1 <= int(d) <= 31 else None
+    return f"date {y or '-'}-{mo:02}-{int(d):02}" if cap and 1 <= mo <= 12 and 1 <= int(d) <= 31 else None
 
 def numbers(text: str, masked=False) -> list:
     """All number tokens in text (citations and URLs excluded): one-token dates, centuries and times, written-out
@@ -392,8 +394,12 @@ def rounds_to(src, value, places: int) -> bool:
     with contextlib.suppress(ArithmeticError):
         return src == value or src.quantize(Decimal(1).scaleb(-places), ROUND_HALF_UP) == value
     return False
-
+def date_parts(key) -> set:  # "date 1923-10-29" -> {"date --10-29", 1923}; empty for any other reading
+    return {"date -" + key[9:], Decimal(key[5:9])} if re.match(r"date \d", str(key)) else set()
 def num_matches(num: Num, pool) -> bool:
+    """A reading of `num` in `pool`; a full date matches when its yearless key and its year are both there."""
+    if parts := date_parts(num.cands[0][0]):
+        return parts <= {s for s, _ in pool}
     return any(rounds_to(s, v, d) for v, d in num.cands for s, _ in pool)
 def is_year(num: Num) -> bool:
     return num.text.isdigit() and len(num.text) == 4 and 1900 <= int(num.text) <= 2100
@@ -458,11 +464,8 @@ def quote_status(quote: str, texts) -> str:
     return "missing"
 
 def expand_cites(inner: str) -> list:
-    out = []
-    for piece in re.split(r"[,;]", inner):
-        bounds = [int(x) for x in re.split(r"[-–—]", piece) if x.strip()]
-        out.extend(range(bounds[0], bounds[-1] + 1) if len(bounds) == 2 else bounds)
-    return out
+    bounds = [[int(x) for x in re.split(r"[-–—]", piece) if x.strip()] for piece in re.split(r"[,;]", inner)]
+    return [n for b in bounds for n in (range(b[0], b[-1] + 1) if len(b) == 2 else b)]
 
 def receipt_label(line: str) -> tuple:
     """(label, unverified) from the last parenthesised field; label None when absent."""
@@ -580,9 +583,8 @@ class Checker:
     def __init__(self, run: Path):
         self.snaps = load_snapshots(run)
         self.receipts, self.labels, self.rstats = load_receipts(run, self.snaps)
-        self.flags, self._pool, self.first_seen = [], {}, {}
+        self.flags, self._pool, self.first_seen, self.eq_ok, self.eq_bad = [], {}, {}, 0, 0
         self.counts = {"quoted": 0, "page": 0, "missing": 0, "none": 0}
-        self.eq_ok = self.eq_bad = 0
     def has_evidence(self, url: str) -> bool:
         return norm_url(url) in self.receipts or norm_url(url) in self.snaps
     def labels_of(self, url: str) -> list:
@@ -598,11 +600,12 @@ class Checker:
         return [t for key in map(norm_url, urls)
                 for t in self.receipts.get(key, []) + ([self.snaps[key]] if key in self.snaps else [])]
     def pool(self, url: str, kind: str) -> list:
-        """Number readings of a URL's receipt spans ("quoted") or of its snapshot ("page")."""
+        """Number readings of a URL's receipt spans ("quoted") or snapshot ("page"), plus each full date's date_parts."""
         key = (norm_url(url), kind)
         if key not in self._pool:
             texts = self.receipts.get(key[0], []) if kind == "quoted" else [self.snaps.get(key[0], "")]
-            self._pool[key] = [c for t in texts for n in numbers(t) for c in n.cands]
+            got = [c for t in texts for n in numbers(t) for c in n.cands]
+            self._pool[key] = got + [(p, 0) for v, _ in got for p in date_parts(v)]
         return self._pool[key]
     def flag(self, kind, sentence, urls, detail, severity=None):
         self.flags.append({"kind": kind, "severity": severity or SEVERITY.get(kind, "low"), "excerpt": excerpt(sentence),
@@ -656,9 +659,8 @@ class Checker:
                 self.flag(uncited, sentence, [], "numbers without citation: " + ", ".join(loose_nums))
         return cited
     def note_cites(self, text: str):
-        for m in CITE.finditer(text):
-            for n in expand_cites(m.group(1)):
-                self.first_seen.setdefault(n, text)
+        for n in (n for m in CITE.finditer(text) for n in expand_cites(m.group(1))):
+            self.first_seen.setdefault(n, text)
     def check_group(self, sents, sources, first=False):
         borrowed = [n for s in sents for m in CITE.finditer(s) for n in expand_cites(m.group(1))]
         for sentence in sents:
@@ -774,8 +776,6 @@ def numberer(nums: dict, urls: list):
                 urls.append(u)
         return "[" + ", ".join(str(nums[k]) for k, _ in keys) + "]"
     return renumber
-
-PLAN_ID = re.compile(r"^#{2,4}\s+([A-Za-z]{1,3}\d{1,2})\b")
 
 def section_order(run: Path) -> list:
     """Section ids in plan.md heading order, then other sections/*.md (not _top/_end) by name."""

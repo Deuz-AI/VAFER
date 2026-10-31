@@ -411,6 +411,24 @@ class QuietCheckTests(RunCase):
         self.assertEqual(self.flags(), [("number-mismatch", "medium")])
         self.assertIn("29.10.1923", self.result["flags"][0]["detail"])
 
+    def test_yearless_and_comma_dates_are_one_token(self):
+        text = "29 Ekim'de, October 29th, the 18th October, 1912, 5 Marching; of these 5 may close"
+        self.assertEqual([n.cands for n in vc.numbers(text)],
+                         [[("date --10-29", 0)], [("date --10-29", 0)], [("date 1912-10-18", 0)], [(Decimal(5), 0)],
+                          [(Decimal(5), 0)]])
+
+    def test_date_parts_count_as_evidence(self):
+        self.page(URL1, "Cumhuriyet 29 Ekim 1923 günü ilan edildi.")
+        self.report("Cumhuriyet 1923'te ilan edildi [1]. Bayram her yıl 29 Ekim'de kutlanır [1].")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(self.result["counts"]["page"], 2)
+        self.fresh_page(URL1, "The Commission returned on the 22nd May, having finished. Signed May 23, 1921.")
+        self.report("Komisyon 22 Mayıs 1921'de döndü [1]. Rapor 25 Mayıs'ta yazıldı [1].")
+        self.check()
+        self.assertEqual(self.flags(), [("number-mismatch", "medium")])
+        self.assertIn("25 Mayıs not found", self.result["flags"][0]["detail"])
+
     def test_clock_time(self):
         self.assertEqual([n.cands for n in vc.numbers("saat 03.02'de")], [[("time 3:02", 0)]])
         self.page(URL1, "Deprem 3:02 sularında oldu.")
