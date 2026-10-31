@@ -138,6 +138,16 @@ class NumberTests(unittest.TestCase):
                          [Decimal("3.45"), Decimal("12.50"), Decimal("3.45"), Decimal("3.45"), "time 3:45"])
 
 
+    def test_numbers_time_grows_linearly_with_dates(self):
+        # review round 3: every date rebuilt the whole text; a 1 MB page with 6,000 dates and times took 27 s
+        text = ("Kayıt 29 Ekim 1923 günü, saat 14:30'da; 12 kişi, 345 ev, 6.789 TL. " + "metin " * 20 + "\n") * 4000
+        start = time.time()
+        found = vc.numbers(text)
+        self.assertLess(time.time() - start, 2.5)
+        self.assertEqual([n.cands for n in found[:3]], [[("date 1923-10-29", 0)], [("time 14:30", 0)], [(12, 0)]])
+        self.assertEqual(len(found), 20000)
+
+
 class SentenceTests(unittest.TestCase):
     def test_abbreviations_and_roman_numerals_do_not_split(self):
         line = ("II. Abdülhamid tahta çıktı. I. Mahmud, I. Derece, S. Sayısı, Dr. Ahmet, vb. Diğer, bkz. Ek, "
@@ -147,6 +157,13 @@ class SentenceTests(unittest.TestCase):
     def test_period_before_digit_never_splits(self):
         line = "See Cmd. 1478 and No. 7596, s. 45. Ayrıca Prof. Ahmet, Doç. Ali, çev. Veli, vol. 2 geldi. Son."
         self.assertEqual(len(vc.sentences([line])), 3, vc.sentences([line]))
+
+    def test_accented_capitals_and_spanish_openers_start_a_sentence(self):
+        # review round 3: "Él", "¿Por qué" and "Ñandú" did not open a new sentence
+        self.assertEqual(vc.sentences(["El precio subió [1]. Él dijo que no [2]. Ésta es otra [3]."]),
+                         ["El precio subió [1].", "Él dijo que no [2].", "Ésta es otra [3]."])
+        self.assertEqual(vc.sentences(["Subió [1]. ¿Por qué subió? ¡Nadie lo sabe! Ñandú [2]."]),
+                         ["Subió [1].", "¿Por qué subió?", "¡Nadie lo sabe!", "Ñandú [2]."])
 
     def test_footnote_markers_end_sentence(self):
         line = "First ends here.³ Second ends.¹² Third ends.[^3] Fourth."
@@ -492,6 +509,43 @@ class QuietCheckTests(RunCase):
         self.assertEqual(self.flags(), [("number-mismatch", "medium")])
         self.assertIn("25 Mayıs not found", self.result["flags"][0]["detail"])
 
+    def test_full_date_year_conflict_on_the_cited_page(self):
+        # review round 3: a year miscopied from the cited page passed through the date's parts
+        for report, page, flagged in (
+                ("Yunanlar 7 Ağustos 1921'de girdi [1].", "Yunanlar 7 Ağustos 1920'de girdi. 1921 yılında köyler yakıldı.",
+                 True),
+                ("Cumhuriyet 29 Ekim 1924'te ilan edildi [1].", "Cumhuriyet 29 Ekim 1923'te ilan edildi. 1924 Anayasası "
+                 "kabul edildi.", True),
+                ("Komisyon 22 Mayıs 1921'de döndü [1].", "The Commission returned on the 22nd May, having finished. "
+                 "Signed May 23, 1921.", False),
+                ("Yunanlar 7 Ağustos 1921'de girdi [1].", "Tarihler 7 Ağustos 1920 ve 7 Ağustos 1921.", False)):
+            with self.subTest(report=report, page=page):
+                self.fresh_page(URL1, page)
+                self.report(report)
+                self.check()
+                self.assertEqual(self.flags(), [("number-mismatch", "medium")] if flagged else [])
+
+    def test_fallback_needs_an_ordinal_century_or_a_day_before_a_word(self):
+        # review round 3: on a page without a century or date token, any equal plain number passed
+        for report, page, flagged in (
+                ("Kale 12. yüzyılda yapıldı [1].", "Kale çok eskidir; 12 kule vardır.", True),
+                ("Kale 12. yüzyılda yapıldı [1].", "Zamek zbudowano w 12. wieku.", False),
+                ("Kale 12. yüzyılda yapıldı [1].", "Il castello è del 12º secolo circa.", False),
+                ("Bayram 29 Ekim'de kutlanır [1].", "Kale çok eskidir; bkz. sayfa 29.", True),
+                ("Bayram 29 Ekim'de kutlanır [1].", "Święto obchodzone 29 października.", False)):
+            with self.subTest(report=report, page=page):
+                self.fresh_page(URL1, page)
+                self.report(report)
+                self.check()
+                self.assertEqual(self.kinds(), ["number-mismatch"] if flagged else [])
+
+    def test_time_suffix_den_and_capital_roman_numerals(self):
+        # review round 3: 'den/'dan was not a time suffix; under (?i) Italian "il" read as a Roman numeral
+        self.assertEqual([n.cands for n in vc.numbers("Tren 03.02'den kalktı, 14.30'dan önce.")],
+                         [[("time 3:02", 0)], [("time 14:30", 0)]])
+        self.assertEqual([n.cands for n in vc.numbers("Fu costruito nel il secolo XVI.")], [[("century 16", 0)]])
+        self.assertEqual([n.cands for n in vc.numbers("XVI secolo; xvi. madde")], [[("century 16", 0)]])
+
     def test_dates_and_centuries_across_languages(self):
         for report, page in (("Cumhuriyet 29 Ekim 1923'te ilan edildi [1].", "Proclaimed on Oct. 29, 1923."),
                              ("Deprem 17 Ağustos 1999'da oldu [1].", "The quake struck on Aug. 17, 1999."),
@@ -622,6 +676,15 @@ class QuietCheckTests(RunCase):
                 self.assertEqual(self.check()["open"], still_open)
                 old = disp
 
+    def test_end_table_cells_keep_escaped_pipes(self):
+        # review round 3: an escaped \| shifted the columns, so the B rule read the A cell
+        self.page(URL1, "Fiyat 2,61 TL. Değerler 450 ve 451.")
+        self.page(URL2, "Kaynak sayfası, rakam yok.")
+        self.end_report(["| a \\| b | 450 \\| 451 [1] | 300 [2] | A | açık |", "| c | 450 [1] | 451 \\| 300 | A | açık |"])
+        self.check()
+        self.assertEqual(self.flags(), [("b-unopened", "high")])
+        self.assertRegex(self.result["flags"][0]["detail"], r"^B value `451 \\+\| 300`")
+
     def test_b_cell_citations_count_for_the_row(self):
         self.page(URL1, "Fiyat 2,61 TL. Eski ölçüm alanı 4.200 m² verir.")
         self.page(URL2, "Kazı ekibi alanı yaklaşık 3.000 m² olarak verdi.")
@@ -688,6 +751,35 @@ class QuietCheckTests(RunCase):
         self.assertTrue(result["summary"].startswith("script — 3 figures"))
         self.assertEqual(result["counts"], {"quoted": 1, "page": 1, "missing": 1, "none": 0})
 
+    def test_uncited_figures_count_as_without_evidence(self):
+        # review round 3: flagged uncited figures were left out of the honest counts
+        self.page(URL1, "Fiyat 2,61 TL")
+        self.report("Fiyat 2,61 TL [1].\n\nHane sayısı 4.500 oldu, köy sayısı 31.\n\nAlan 2,5 × 4 = 10 hektar.")
+        result = self.check()
+        self.assertEqual(sorted(self.kinds()), ["uncited", "uncited"])
+        self.assertEqual(result["counts"], {"quoted": 0, "page": 1, "missing": 0, "none": 3})
+        self.assertIn("4 figures: 0 in a quoted receipt, 1 elsewhere on the cited page, 0 not found, 3 without evidence",
+                      result["summary"])
+
+    def test_html_comments_over_several_lines_are_skipped(self):
+        # review round 3: the inner lines of a multi-line comment were checked as sentences
+        self.page(URL1, "Fiyat 2,61 TL")
+        self.report("Fiyat 2,61 TL [1].\n\n<!--\nTaslak notu: 4.500 hane\nve 31 köy\n-->\n\nSon cümle <!-- 77 --> burada.")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+
+    def test_body_word_count_on_stdout_and_in_check_md(self):
+        self.page(URL1, "Fiyat 2,61 TL")
+        self.report("Tarih: 31 Ekim 2026\n\nFiyat 2,61 TL oldu [1].\n\n| a | b |\n|---|---|\n| 1 2 3 | 4 [1] |\n\n"
+                    "## Bölüm\n\n- İki — kelime [1].\n\n**Source check:** pending")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(vc.main(["check", str(self.run)]), 0)
+        self.assertEqual(out.getvalue().splitlines()[2], "Body: 6 words")
+        self.assertIn("\nBody: 6 words\n", (self.run / "check.md").read_text(encoding="utf-8"))
+        self.assertRegex((self.run / "report.md").read_text(encoding="utf-8"),
+                         r"\*\*Source check:\*\* script — \d+ figures: [^\n]*\(check\.md\)\n")
+
     def test_receipts_autolink_inner_quotes_and_span_validation(self):
         self.page("https://x.org/p", "Intro text a ‘b’ c and more. Tari-\nfeleri GÜNCELLENDİ  bugün.")
         self.note('- fact — "a \'b\' c" <https://x.org/p> (opened 2026-10-31; primary)\n'
@@ -748,6 +840,35 @@ class QuietCheckTests(RunCase):
         self.assertTrue(lines[1].endswith(" — https://a.org/x"), lines)
         self.assertFalse((self.run / "check.md").exists())
         self.assertEqual((self.run / "evidence.md").read_text(encoding="utf-8"), "Source check: pending\n")
+
+    def test_section_draft_name_in_any_case(self):
+        # review round 3: --section opened sections/<id>.md exactly; Linux file systems are case-sensitive
+        (self.run / "sections").mkdir()
+        self.page("https://a.org/x", "Fiyat 2,61 TL ve 300 abone.")
+        (self.run / "sections" / "S1.md").write_text("Abone sayısı 450 [https://a.org/x].\n", encoding="utf-8")
+        real = vc.read_text
+
+        def case_sensitive(path):
+            if Path(path).name not in os.listdir(Path(path).parent):
+                raise FileNotFoundError(path)
+            return real(path)
+
+        out = io.StringIO()
+        with mock.patch.object(vc, "read_text", case_sensitive), contextlib.redirect_stdout(out):
+            self.assertEqual(vc.main(["check", str(self.run), "--section", "s1"]), 0)
+        self.assertTrue(out.getvalue().startswith("section s1: 1 flags (0 high, 1 medium, 0 low)"), out.getvalue())
+
+    def test_numbered_citation_in_a_draft_is_flagged_not_mapped(self):
+        # review round 3: a [n] copied back from report.md was read as the draft's n-th URL
+        (self.run / "sections").mkdir()
+        self.page("https://a.org/x", "Fiyat 2,61 TL ve 300 abone.")
+        self.page("https://b.org/y", "Nüfus 270.976.")
+        (self.run / "sections" / "s1.md").write_text(
+            "Fiyat 2,61 TL [https://a.org/x]. Nüfus 270.976 [https://b.org/y]. Abone 300 [2].\n", encoding="utf-8")
+        flags = vc.check_section(self.run, "s1")
+        self.assertEqual([(f["kind"], f["severity"], f["detail"]) for f in flags],
+                         [("dangling", "high", "numbered citation [2]; write [URL]")])
+        self.assertIn("Abone 300 [2].", flags[0]["excerpt"])
 
     def test_section_lines_show_table_rows_unescaped(self):
         (self.run / "sections").mkdir()
@@ -849,10 +970,10 @@ class AssembleTests(RunCase):
         self.assertRegex(self.out, r"report\.md: 4 sections")
 
     def test_assemble_title_never_holds_a_url(self):
-        self.page("https://c.org/z", "https://doi.org/10.1/abc\nGamma Journal of Studies 2019\nDeğer 7,5 ölçüldü.")
+        self.page("https://c.org/z", "https://doi.org/10.1/abc\nGamma Survey of Coastal Towns 2019\nDeğer 7,5 ölçüldü.")
         self.section("s9", "## Dokuz\n\nDeğer 7,5 [https://c.org/z].")
         text = self.assemble()
-        self.assertIn("\n[3] Gamma Journal of Studies 2019 https://c.org/z\n", text)
+        self.assertIn("\n[3] Gamma Survey of Coastal Towns 2019 https://c.org/z\n", text)
         self.assertEqual(vc.parse_report(text)[1][3], "https://c.org/z")
         kinds = [f["kind"] for f in vc.check(self.run)["flags"]]
         self.assertNotIn("unverifiable", kinds)
@@ -933,6 +1054,16 @@ class AssembleTests(RunCase):
         self.section("x1", "## Ek\n\nEk bilgi [https://x.org/a b].")
         self.assemble()
         self.assertIn("[https://x.org/a b]", self.err)
+
+    def test_assemble_warns_about_numbered_citations_in_drafts(self):
+        # review round 3: a [n] copied back from report.md passed through unchanged and pointed at another source
+        (self.run / "sections" / "s1.md").unlink()
+        self.section("S1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x]. Eski metin [3; 4].")
+        self.section("_top", "# Rapor\n\nKısa cevap [https://b.org/y] [1].")
+        self.assemble()
+        self.assertIn("warning: sections/S1.md: numbered citation [3; 4]; write [URL]\n", self.err)
+        self.assertIn("warning: sections/_top.md: numbered citation [1]; write [URL]\n", self.err)
+        self.assertEqual(self.err.count("numbered citation"), 2, self.err)
 
     def test_assemble_warns_without_top_and_end(self):
         for sid in ("_top", "_end"):
@@ -1120,7 +1251,8 @@ class FetchTests(RunCase):
                               r"Title: Tarife duyurusu\n\n")
         self.assertEqual(calls, [("https://example.org/t", 20)])
         again = self.fetch(["https://example.org/t/", "https://www.example.org/t#p3"], opener)
-        self.assertEqual(again, [lines[0], lines[0]])
+        fetched = vc.snap_head(self.run / "pages" / name)[0]["Fetched"][:10]
+        self.assertEqual(again, [f"{lines[0]} (cached {fetched})"] * 2)
         self.assertEqual(len(calls), 1)
         self.assertFalse((self.run / "pages" / "index.tsv").exists())
         self.assertEqual(list(vc.load_snapshots(self.run)), ["example.org/t"])
@@ -1162,7 +1294,9 @@ class FetchTests(RunCase):
         self.assertFalse(lock.exists())
         lock.touch()  # a live fetch holds it: the ok snapshot is read at once and the lock is left alone
         start = time.time()
-        self.assertEqual(self.fetch([url], mock.Mock(side_effect=AssertionError("downloaded again"))), lines)
+        fetched = vc.snap_head(next((self.run / "pages").glob("*.txt")))[0]["Fetched"][:10]
+        self.assertEqual(self.fetch([url], mock.Mock(side_effect=AssertionError("downloaded again"))),
+                         [f"{lines[0]} (cached {fetched})"])
         self.assertLess(time.time() - start, 5)
         self.assertTrue(lock.exists())
 
@@ -1190,6 +1324,8 @@ class FetchTests(RunCase):
                 time.sleep(0.05)
                 return b"x" * 100
 
+            read1 = read
+
         with mock.patch.object(vc, "DEADLINE", 1), mock.patch.object(vc, "sleep", sleeps.append):
             lines = self.fetch(["https://a.org/busy"], busy)
         self.assertTrue(lines[0].startswith("http-503 "), lines)
@@ -1200,6 +1336,68 @@ class FetchTests(RunCase):
         self.assertLess(time.time() - start, 3)
         self.assertTrue(lines[0].startswith("TimeoutError"), lines)
         self.assertEqual(vc.DEADLINE, 30)
+
+    def test_download_reads_one_network_chunk_at_a_time(self):
+        # review round 3: a buffered read(64 KB) waits for 64 KB, so a trickling server outlived the deadline
+        class Buffered(FakeResponse):
+            def read(self, size=-1):
+                time.sleep(2)
+                return b"x" * 100
+
+            def read1(self, size=-1):
+                time.sleep(0.05)
+                return b"x" * 100
+
+        start = time.time()
+        with mock.patch.object(vc, "DEADLINE", 0.3):
+            lines = self.fetch(["https://a.org/trickle"], lambda req, timeout: Buffered(b"", "text/html"))
+        self.assertLess(time.time() - start, 1.5)
+        self.assertTrue(lines[0].startswith("TimeoutError"), lines)
+
+    def test_fetch_refresh_downloads_again_and_cached_lines_say_so(self):
+        calls, page = [], {"html": "<p>Tarife 2,61 TL olarak açıklandı.</p>" + PROSE}
+
+        def opener(req, timeout):
+            calls.append(req.full_url)
+            return FakeResponse(page["html"].encode(), "text/html")
+
+        first = self.fetch(["https://example.org/t"], opener)
+        fetched = vc.snap_head(self.run / "pages" / first[0].split()[1])[0]["Fetched"][:10]
+        self.assertRegex(fetched, r"^\d{4}-\d\d-\d\d$")
+        self.assertEqual(self.fetch(["https://example.org/t"], opener), [f"{first[0]} (cached {fetched})"])
+        page["html"] = "<p>Tarife 2,75 TL olarak açıklandı.</p>" + PROSE
+        out = io.StringIO()
+        with mock.patch.object(vc, "urlopen", opener), contextlib.redirect_stdout(out):
+            self.assertEqual(vc.main(["fetch", str(self.run), "--refresh", "https://example.org/t"]), 0)
+        self.assertEqual((len(calls), out.getvalue().startswith("ok "), "cached" in out.getvalue()), (2, True, False))
+        self.assertIn("2,75 TL", vc.load_snapshots(self.run)["example.org/t"])
+        page["html"] = "".join(f"<li>Menu item {i}</li>" for i in range(40))  # blocked now: the ok page is kept
+        out = io.StringIO()
+        with mock.patch.object(vc, "urlopen", opener), contextlib.redirect_stdout(out):
+            vc.main(["fetch", str(self.run), "--refresh", "https://example.org/t"])
+        self.assertTrue(out.getvalue().startswith("boilerplate - "), out.getvalue())
+        self.assertIn("kept", out.getvalue())
+        self.assertIn("2,75 TL", vc.load_snapshots(self.run)["example.org/t"])
+        self.assertEqual([p.suffix for p in (self.run / "pages").iterdir()], [".txt"])
+
+    def test_find_prints_the_snapshot_file_line_numbers(self):
+        # follow-up test: find's line 13 was line 20 of pages/<file>.txt
+        def opener(req, timeout):
+            return FakeResponse(("<html><head><title>İSKİ</title></head><body><p>Giriş paragrafı burada.</p>"
+                                 "<p>İSKİ baraj doluluk oranı yüzde 41 olarak açıklandı.</p>" + PROSE).encode(),
+                                "text/html")
+
+        self.page(URL2, "Satır bir.\nSatır iki.\nBaraj hattı burada da geçer.")  # a v0.0.4 header of four lines
+        out = self.fetch(["https://iski.istanbul/baraj"], opener, find="baraj")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            vc.cmd_find(self.run, "baraj")
+        shown = [(n, t) for n, _, t in (line.strip().partition(": ") for line in out[1:] + buf.getvalue().splitlines())
+                 if n.isdigit() and "araj" in t]
+        self.assertEqual(len(shown), 3, shown)
+        files = [p.read_text(encoding="utf-8").split("\n") for p in (self.run / "pages").glob("*.txt")]
+        for number, text in shown:
+            self.assertTrue(any(f[int(number) - 1:int(number)] == [text] for f in files), (number, text))
 
     def test_save_leaves_no_temp_file_when_the_move_fails(self):
         def stuck(src, dst):
@@ -1222,6 +1420,15 @@ class FetchTests(RunCase):
 
         with mock.patch.object(vc, "snap_head", flaky):
             self.assertEqual(list(vc.load_snapshots(self.run)), [vc.norm_url(URL2)])
+
+    def test_status_header_wins_over_a_legacy_index_row(self):
+        # review round 3: a URL that failed in a v0.0.4 folder stayed excluded after an ok fetch there
+        self.page(URL1, "Fiyat 2,61 TL")  # a v0.0.4 snapshot: no Status header, so its index row counts
+        (self.run / "pages" / "p1.txt").write_text(f"URL: {URL2}\nFetched: 2026-10-31T10:00:00+00:00\nStatus: ok\n"
+                                                   "Title: T\n\nNüfus 300", encoding="utf-8")
+        (self.run / "pages" / "index.tsv").write_text(f"{URL1}\tp0.txt\thttp-503\t2026-10-28\n"
+                                                      f"{URL2}\tp1.txt\thttp-503\t2026-10-28\n", encoding="utf-8")
+        self.assertEqual(list(vc.load_snapshots(self.run)), [vc.norm_url(URL2)])
 
     def test_find_reads_the_body_not_the_layout_copy(self):
         self.page("https://x.org/doc.pdf", "Baraj doluluk oranı yüzde 41 oldu.")
@@ -1384,15 +1591,16 @@ class FetchTests(RunCase):
         self.assertTrue(lines[0].startswith("ok "), lines)
         self.assertTrue(lines[1].startswith("boilerplate "), lines)
 
-    def pdf_fetch(self, which, body="Reading order paragraph about water tariffs in the city. " * 12, hook=None):
+    def pdf_fetch(self, which, body="Reading order paragraph about water tariffs in the city. " * 12, hook=None,
+                  layout=None):
         raw, runs = b"%PDF-1.4 fake", []
 
         def fake_run(args, **kwargs):
             runs.append(args)
             if hook:
                 hook(args, kwargs)
-            text = "LAYOUT col1     col2\n" if "-layout" in args else ""
-            Path(args[-1]).write_text(text + body, encoding="utf-8")
+            text = "LAYOUT col1     col2\n" + (layout or body) if "-layout" in args else body
+            Path(args[-1]).write_text(text, encoding="utf-8")
 
         with mock.patch.object(vc.shutil, "which", lambda name: which), \
                 mock.patch.object(vc.subprocess, "run", fake_run):
@@ -1432,6 +1640,35 @@ class FetchTests(RunCase):
                 + "Reading order paragraph about water tariffs in the city. " * 12)
         lines, _, _ = self.pdf_fetch("pdftotext", body)
         self.assertTrue(lines[0].startswith("ok ") and lines[0].endswith(" Yalova Kaplıcalarının Osmanlı Dönemi"), lines)
+
+    def test_pdf_title_skips_the_masthead(self):
+        # title check 2026-10-31: DergiPark PDFs were titled by their journal masthead, not the article
+        for head, title in (
+                ("UNIMUSEUM\nInternational University Museums Association Platform\nARAŞTIRMA MAKALESİ / RESEARCH "
+                 "ARTICLE\n", "THE MOVING HOUSE OR ATATÜRK HOUSE MUSEUM"),
+                ("İNSAN VE TOPLUM BİLİMLERİ ARAŞTIRMALARI DERGİSİ Cilt: 5, Sayı: 8, 2016 Sayfa: 2782-2816\n",
+                 "Çerkes Göçleri ve Çerkeslerin Anadolu’da Yurt Edinme Arayışları"),
+                ("KUJES 7(1):27-53, 2021\nInternational Journal of Social and Educational Sciences, 2017\n",
+                 "Population Change in a Province"),
+                ("Millî Saraylar, Yıl: 2022, S: 23, s. 66-85\nMakale Gönderim Tarihi: 16.07.2018\nAraştırma Makalesi "
+                 "DOI: 10.54078/savsad.1626262\nE-mail: yazar@example.org\n", "Nüfus Coğrafyası Açısından Bir İnceleme")):
+            with self.subTest(title=title):
+                for path in (self.run / "pages").iterdir():
+                    path.unlink()
+                lines, _, _ = self.pdf_fetch("pdftotext", f"{head}{title}\n" + "Reading order paragraph. " * 30)
+                self.assertTrue(lines[0].endswith(f" {title}"), lines)
+
+    def test_pdf_table_only_uses_layout(self):
+        # review round 3: reading order put each table cell on its own line, so the page read as boilerplate
+        cells = "".join(f"İlçe {i}\n{1000 + i * 37}\n2,{i:02} TL\n" for i in range(30))
+        rows = "".join(f"İlçe {i}       {1000 + i * 37} abone       2,{i:02} TL/kWh       2026\n" for i in range(30))
+        self.assertEqual((vc.page_status(cells), vc.page_status(rows)), ("boilerplate", "ok"))
+        lines, runs, _ = self.pdf_fetch("pdftotext", cells, layout=rows)
+        self.assertTrue(lines[0].startswith("ok ") and ".txt" in lines[0], lines)
+        raw = (self.run / "pages" / lines[0].split()[1]).read_text(encoding="utf-8")
+        self.assertIn("\nCharset: pdf-layout\n", raw)
+        self.assertIn("İlçe 7       1259 abone", vc.load_snapshots(self.run)["x.org/doc.pdf"])
+        self.assertEqual([p.name.split(".", 1)[1] for p in (self.run / "pages").iterdir()], ["txt"])  # no layout copy
 
     def test_scanned_pdf_is_saved_for_the_pdf_reader(self):
         lines, runs, raw = self.pdf_fetch("pdftotext", "\f\n  \n")
