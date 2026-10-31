@@ -202,3 +202,36 @@ The four "empty" pages are JavaScript apps and need a browser. The four former "
 - **TDV print PDFs.** There is one in this run, but TDV is a common source for Turkish local history. Its broken letters cost one false flag (asm_probe F21) and one dropped receipt, and month names such as "Kasým" never read as dates. A repair would fit in `fetch`: turn ý þ ð Ý Þ Ð into ı ş ğ İ Ş Ğ when a text has those letters and no ı ş ğ. The script is at 899 of its 900 lines, though.
 - **Page-only matches in very large snapshots.** Any small number matches the 929,736-character Toynbee book. The check counts these as "elsewhere on the cited page" and does not flag them, as designed. That count says little for a source this size.
 - **Snapshot titles of PDFs and plain text.** The Gutenberg text's title is "*** START OF THE PROJECT GUTENBERG EBOOK 73839 ***". The TDV print PDF's title is a sentence fragment in its broken font. `assemble` would print both in the Sources list.
+
+## After the replays
+
+Fixed in d10ff57 and 2168c94. `vafer_check.py` is at 900 of its 900 lines, and `python -m pytest -q tests` passes. Test names are in `tests/test_vafer_check.py`.
+
+- A full date no longer matches through its parts when the cited page gives that day and month in another year ("7 Ağustos 1921" against "7 Ağustos 1920 … 1921"): `test_full_date_year_conflict_on_the_cited_page`.
+- A table-only PDF, whose reading-order text is boilerplate, is saved from its `-layout` text (`Charset: pdf-layout`), not as `pdf-saved`: `test_pdf_table_only_uses_layout`.
+- A snapshot's own `Status:` header wins over a v0.0.4 `index.tsv` row: `test_status_header_wins_over_a_legacy_index_row`.
+- `check --section` finds `sections/<id>.md` in any case, as `assemble` does: `test_section_draft_name_in_any_case`.
+- An escaped `\|` stays inside its END-table cell: `test_end_table_cells_keep_escaped_pipes`.
+- `fetch` checks the 30 s deadline after every network read (`read1`): `test_download_reads_one_network_chunk_at_a_time`.
+- "03.02'den" reads as a time, and Roman centuries need capitals ("il secolo XVI" is the 16th century): `test_time_suffix_den_and_capital_roman_numerals`.
+- A sentence can open with an accented capital, ¿ or ¡: `test_accented_capitals_and_spanish_openers_start_a_sentence`.
+- `find` and `fetch --find` number lines as `pages/<file>.txt` does: `test_find_prints_the_snapshot_file_line_numbers`.
+- `fetch --refresh` downloads again; a skipped URL's line ends "(cached <date>)"; a refresh that gets a page that is not ok keeps the ok snapshot: `test_fetch_refresh_downloads_again_and_cached_lines_say_so`.
+- Source titles: of 8 live pages (Wikipedia, yalova.gov.tr, Sözcü, Smithsonian, Harvard, Küre, two DergiPark PDFs), the 6 HTML titles were right and both PDFs were titled by their journal masthead. JUNK now skips masthead and metadata lines, and both PDFs get their article titles. Over the 25 PDF snapshots in `work/`, titles taken from a masthead, a metadata line or a citation line fall from 17 to 1 (a Resmî Gazete section label): `test_pdf_title_skips_the_masthead`.
+- A numbered `[n]` in a draft: `assemble` warns, and `--section` flags it as dangling instead of reading it as the draft's n-th URL: `test_assemble_warns_about_numbered_citations_in_drafts`, `test_numbered_citation_in_a_draft_is_flagged_not_mapped`.
+- Figures flagged uncited count as "without evidence" (asm_probe: 2 becomes 50): `test_uncited_figures_count_as_without_evidence`.
+- HTML comments over several lines, and inline ones, are skipped: `test_html_comments_over_several_lines_are_skipped`.
+- On a page with no century or date token, the fallback takes only an ordinal ("16.", "16e") for a century and a day before a word for a date: `test_fallback_needs_an_ordinal_century_or_a_day_before_a_word`.
+- `check` prints "Body: N words" and writes it to check.md (frozen run: 1,521): `test_body_word_count_on_stdout_and_in_check_md`.
+- `numbers()` blanks one-token figures in one pass and reads only the 40 characters before a time, so a page of many dates stays fast: `test_numbers_time_grows_linearly_with_dates`.
+
+The frozen run (`work/final-check`, a copy of `v004-yalova-run-marked`) gives the same 4 b-unopened and 3 medium flags as before this pass; its check.md differs only by the Body line.
+
+Deferred:
+
+- "Toplam 12. Ekim 1920'de" still reads as the date 1920-10-12: a known limit, and no lines are left for a rule.
+- The TDV print-PDF font repair (ý þ ð for ı ş ğ, proposal 2 above): no lines are left under the 900-line cap.
+- Rejected values in prose (proposal 1 above): researcher.md text, in another lane.
+- A yearless date still matches a page's day before any word ("29 Ekim" against "29 kule"): the fallback cannot tell an unknown month name from another word.
+- The Gutenberg "*** START OF …" line and the TDV fragment remain titles: not among the 8 pages measured, and JUNK has no room for them.
+- An escaped `\|` shows as `\\|` in check.md excerpts: cosmetic.
