@@ -50,17 +50,17 @@ Ask first only when there is no topic: "What should we think about? A sentence o
 
 ```text
 **What you may have missed**   (4-5, at most 2 per angle)
-1. **<point, one sentence>** <why it matters here, one sentence naming what it changes>. → <first step, under an hour> <[source](link), (unchecked) on a fact, or nothing>
+1. **<point, ≤12 words>** <why here and what it changes, ≤15 words>. → <first step, under an hour, ≤8 words> <[source](link), (unchecked) on a fact, or nothing>
 **Other routes**   (2-3, one line each)
-A. **<route>** — <main trade-off>
+A. **<route>** — <main trade-off, ≤12 words>
 **Obvious, skipped:** <up to six titles>
 **Yours to decide**   (0-2, only if the answer changes a pick)
 - <question> — <what the answer changes>
-**Worth researching:** <question>   (0-1)
+**Worth researching:** <question, ≤20 words>   (0-1)
 Saved: <path> · Next: <follow-ups to type now: "deepen 1 and A", "more", "check 2", "research">
 ```
 
-In the user's language, every heading and label included; at most 350 words, 30 per point; to fit, drop the last missed points. Ideas or objects asked for come first: 3–6, under their own heading, in place of Other routes. A fact is a number, law, price, product or date. No praise, closing question, summary or p values; an angle is named only when missing, on the Saved line. Next names only installed modules, never superpowers.
+In the user's language, every heading and label included; at most 350 words; to fit, drop the last missed points. Ideas or objects asked for come first: 3–6, under their own heading, in place of Other routes. A fact is a number, law, price, product or date. No praise, closing question, summary or p values; an angle is named only when missing, on the Saved line. Next names only installed modules, never superpowers.
 
 ## After the answer
 
