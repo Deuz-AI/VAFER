@@ -69,9 +69,9 @@ LABELS = {**{k: k for k in ("primary", "official", "scholarly", "press", "lead",
 MIX = ("primary", "official", "scholarly", "press", "lead", "unlabelled")
 LEAD_DOMAINS = ("wikipedia.org", "wikiwand.com", "quora.com", "reddit.com", "medium.com", "blogspot.com",
                 "wordpress.com", "eksisozluk.com", "fandom.com", "news.google.com", "msn.com", "yahoo.com")
-JUNK = re.compile(r"^\W*(?:(?:skip|jump) to|search)\b|:$|\|.*\||^[\W\d]*$|\b(?:(?:e-?)?(?:issn|isbn)|doi|e-?mail"
-                  r"|received|accepted|journal|dergisi|association|article|makale(?:si)?|yayımlanır)\b|\b(?:cilt|sayı"
-                  r"|vol|volume|issue|yıl)\b\.?\s*[:./]?\s*\d|\b(?:no|s)[.:]\s*\d|\d\s*\(\d+\)", re.I)  # never a title
+JUNK = re.compile(r"^\W*(?:(?:skip|jump) to|search)\b|:$|\|.*\||^[\W\d]*$|:\s*\d\d?[./]\d\d?[./]\d|\b(?:e?-?is[sb]n|doi"
+                  r"|e-?mail|received|accepted|journal|dergisi|association|article|makale(?:si)?|yayımlanır)\b|\b(?:cilt"
+                  r"|sayı|vol(?:ume)?|issue|yıl|no(?=[.:])|s(?=[.:]))\W{0,3}\d|\d\s*\(\d+\)", re.I)  # never a title
 LIST_MARK = re.compile(r"^\s*(?:\d+[.)]|[-*+]|>)\s+")
 # sentence end: mark plus footnote markers (.³ .[^3]) before space + capital; never a period before a digit
 SENT_END = re.compile(r"[.!?…](?:[⁰¹²³⁴-⁹]+|\[\^\d+\])*(?=\s+[\[(“\"«„¿¡A-ZÀ-ÖØ-ÞĞİŞŁŚŹŻĆŃČŠŽŘΑ-ΩА-Я])|[!?…](?=\s+\d)")

@@ -1651,7 +1651,9 @@ class FetchTests(RunCase):
                 ("KUJES 7(1):27-53, 2021\nInternational Journal of Social and Educational Sciences, 2017\n",
                  "Population Change in a Province"),
                 ("Millî Saraylar, Yıl: 2022, S: 23, s. 66-85\nMakale Gönderim Tarihi: 16.07.2018\nAraştırma Makalesi "
-                 "DOI: 10.54078/savsad.1626262\nE-mail: yazar@example.org\n", "Nüfus Coğrafyası Açısından Bir İnceleme")):
+                 "DOI: 10.54078/savsad.1626262\nE-mail: yazar@example.org\n", "Nüfus Coğrafyası Açısından Bir İnceleme"),
+                ("26.03.2Yayın: 2023 Yayın Tarihi:15.10.2023\nGeliş Tarihi: 28/02/2020 Kabul Tarihi:25/06/2020\n",
+                 "KAPLICALARDAN TERMAL OTELLERE")):
             with self.subTest(title=title):
                 for path in (self.run / "pages").iterdir():
                     path.unlink()
