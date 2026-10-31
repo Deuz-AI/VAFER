@@ -32,10 +32,11 @@ OPMAP = {"×": "*", "*": "*", "·": "*", "x": "*", "/": "/", "÷": "/", "+": "+"
 QUOTE_RX = re.compile(r'"([^"\n]+)"|“([^”\n]+)”|«([^»\n]+)»|„([^“”\n]+)[“”]')
 RECEIPT = re.compile(r'^\s*[-*+]\s+(?P<fact>.*?)["“„](?P<span>[^"“”\n]+)["”“]\s*(?P<url>https?://\S+|file:///\S+)')
 HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
-SOURCE_TITLES = ("sources", "references", "kaynaklar", "kaynakça", "πηγές", "източници")
+SOURCES_MARK, END_MARK = "<!-- vafer:sources -->", "<!-- vafer:end -->"
+COMMENT = re.compile(r"^\s*<!--.*-->\s*$")
 SOURCE_ENTRY = re.compile(r"^\s*(?:[-*]\s*)?\[(\d+)\]:?\s+(.*)$|^\s*(\d+)\.\s+(.*)$")
-CHECK_LINE = re.compile(r"(?P<pre>(?:Source check|Kaynak kontrolü)[*_]*[ \t]*:[*_]*[ \t]*)(?P<val>[^\r\n]*)", re.I)
-MIX_LINE = re.compile(r"(?P<pre>(?:Source mix|Kaynak dağılımı)[*_]*[ \t]*:[*_]*[ \t]*)(?P<val>[^\r\n]*)", re.I)
+CHECK_LINE = re.compile(r"(?P<pre>Source check[*_]*[ \t]*:[*_]*[ \t]*)(?P<val>[^\r\n]*)", re.I)
+MIX_LINE = re.compile(r"(?P<pre>Source mix[*_]*[ \t]*:[*_]*[ \t]*)(?P<val>[^\r\n]*)", re.I)
 LABELS = {"primary": "primary", "official": "official", "scholarly": "scholarly", "press": "press",
           "secondary": "press", "lead": "lead", "derived": "derived"}
 MIX = ("primary", "official", "scholarly", "press", "lead", "unlabelled")
@@ -54,8 +55,8 @@ SPELL = re.compile(r"(?<![\w.,])(?:(?P<n>\d+(?:[.,]\d+)?)\s*|(?P<yuz>yüz)\s+)?"
                    r"(?:(?<=bin|and)\s+(?P<tail>\d{1,3})(?!\d|[.,]\d))?", re.I)
 SCALE = {"bin": 3, "thousand": 3, "milyon": 6, "million": 6, "milyar": 9, "billion": 9, "trilyon": 12, "trillion": 12}
 OLE_MAGIC = b"\xd0\xcf\x11\xe0"
-LEAK = re.compile(r"\[GAP\]|\[prior\]|\bCOVERED\b|\bPARTIAL\b|\bNOT-FOUND\b|\bNOT SEARCHED\b"
-                  r"|(?i:\bresearcher\b|\bgap wave\b|\bwave 1\b)")
+LEAK = re.compile(r"\[(?:GAP|prior|brainstorm)\]|\b(?:COVERED|PARTIAL|NOT-FOUND|NOT SEARCHED)\b"
+                  r"|\b(?:notes|sections)/[\w.-]+\.md\b|\bpages/[\w-]+\.txt\b")  # internal tokens only
 QMAP = str.maketrans({"“": '"', "”": '"', "„": '"', "«": '"', "»": '"', "‘": "'", "’": "'", "‚": "'",
                       "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "―": "-", "−": "-"})
 QUOTE_FLAGS = {"near": ("quote-near", "matches only after Turkish-aware case folding"),
@@ -411,28 +412,41 @@ def load_snapshots(run: Path) -> dict:
             snaps.setdefault(norm_url(text.split("\n", 1)[0][4:].strip()), snapshot_body(text))
     return snaps
 
+def is_entry(line: str) -> bool:
+    return bool(SOURCE_ENTRY.match(line) and URL_RX.search(line))
+
+def sources_start(lines) -> int | None:
+    """Line the sources follow: SOURCES_MARK, else the last heading mostly followed by `[n] ... URL` lines."""
+    marks = [i for i, line in enumerate(lines) if line.strip() == SOURCES_MARK]
+    if marks:
+        return marks[-1]
+    for i in reversed([i for i, line in enumerate(lines) if HEADING.match(line)]):
+        rest = [line for line in lines[i + 1:] if line.strip()]
+        hits = sum(map(is_entry, rest))
+        if hits and 2 * hits >= len(rest):
+            return i
+    return None
+
 def parse_report(text: str):
-    """Return (body_lines, sources {n: url})."""
+    """Return (body lines before END_MARK, sources {n: url}, END block lines up to the sources)."""
     lines = text.splitlines()
-    heads = [i for i, line in enumerate(lines) if (h := HEADING.match(line))
-             and any(t.casefold() in h.group(1).casefold() for t in SOURCE_TITLES)]
-    cut = heads[-1] if heads else None
-    sources = {}
+    cut = sources_start(lines)
+    top, sources = (lines if cut is None else lines[:cut]), {}
     for line in lines[cut + 1:] if cut is not None else []:
-        m = SOURCE_ENTRY.match(line)
-        url = URL_RX.search(line) if m else None
-        if url:
-            sources[int(m.group(1) or m.group(3))] = url.group(0).rstrip(".,;:")
-    return (lines[:cut] if cut is not None else lines), sources
+        if is_entry(line):
+            m = SOURCE_ENTRY.match(line)
+            sources[int(m.group(1) or m.group(3))] = URL_RX.search(line).group(0).rstrip(".,;:")
+    end = next((i for i, line in enumerate(top) if line.strip() == END_MARK), None)
+    return (top, sources, []) if end is None else (top[:end], sources, top[end + 1:])
 
 def sentences(body_lines) -> list:
-    """Split body prose into sentences; table rows stay whole; skip headings, fences, check and date lines."""
+    """Split body prose into sentences; table rows stay whole; skip headings, fences, comments, check and date lines."""
     out, fenced = [], False
     for line in body_lines:
         if line.lstrip().startswith("```"):
             fenced = not fenced
             continue
-        if (fenced or HEADING.match(line) or CHECK_LINE.search(line) or MIX_LINE.search(line)
+        if (fenced or HEADING.match(line) or COMMENT.match(line) or CHECK_LINE.search(line) or MIX_LINE.search(line)
                 or DATE_LINE.match(line) or not line.strip()):
             continue
         line, parts = LIST_MARK.sub("", line, count=1).strip(), []
@@ -555,7 +569,8 @@ def check(run: Path) -> dict:
     """Run every check; write check.md and update the Source check line."""
     report_path = run / "report.md"
     text = read_text(report_path)
-    body, sources = parse_report(text)
+    body, sources, end = parse_report(text)
+    body += end  # the END block is checked like the body for now
     checker = Checker(run)
     first_seen = {}
     h2 = [i for i, line in enumerate(body) if line.startswith("## ")]
@@ -614,7 +629,8 @@ def check(run: Path) -> dict:
 
 def doc_items(text: str) -> tuple:
     """Numbers, citation markers and 4+ word quotes of a report body as (keys, label, unit); sources; sentences."""
-    body, sources = parse_report(text)
+    body, sources, end = parse_report(text)
+    body += end
     items, sents = {"numbers": [], "citations": [], "quotes": []}, sentences(body)
     for unit in sents + [line.strip() for line in body if HEADING.match(line)]:
         items["numbers"] += [(frozenset(v for v, _ in n.cands), n.text.strip(), unit) for n in numbers(unit)]

@@ -100,6 +100,10 @@ class SentenceTests(unittest.TestCase):
         line = "First ends here.³ Second ends.¹² Third ends.[^3] Fourth."
         self.assertEqual(vc.sentences([line]), ["First ends here.³", "Second ends.¹²", "Third ends.[^3]", "Fourth."])
 
+    def test_marker_lines_are_not_sentences(self):
+        lines = [vc.END_MARK, "Text one. Text two.", vc.SOURCES_MARK, "  <!-- any comment -->"]
+        self.assertEqual(vc.sentences(lines), ["Text one.", "Text two."])
+
 
 class CheckTests(RunCase):
     def test_percent_does_not_match_larger_percent(self):
@@ -144,18 +148,70 @@ class CheckTests(RunCase):
         self.check()
         self.assertEqual(sorted(self.kinds()), ["dangling", "unused"])
 
-    def test_kaynaklar_heading_and_url_normalization(self):
+    def test_marker_heading_and_url_normalization(self):
         self.page("http://epdk.gov.tr/tarifeler?utm_source=x#top", "Fiyat 2,61 TL")
-        self.report("Fiyat 2,61 TL [1].", heading="### Kaynakça")
+        self.report("Fiyat 2,61 TL [1].", heading=f"{vc.SOURCES_MARK}\n### Kaynakça")
         result = self.check()
         self.assertEqual(self.kinds(), [])
         self.assertEqual(result["matched"], 1)
 
     def test_label_leak(self):
         self.page(URL1, "x")
-        self.report("This part is PARTIAL [GAP] per the researcher [1].")
+        self.report("This part is PARTIAL [GAP] per notes/s1.md [1].")
         self.check()
         self.assertEqual(self.kinds().count("label-leak"), 3)
+
+    def test_leak_only_internal_tokens(self):
+        self.page(URL1, "Values 0 and 1.")
+        self.report("The researcher found a wave of new records in wave 1 of the gap wave [1].")
+        self.check()
+        self.assertEqual(self.kinds(), [])
+        for token in ("[prior]", "NOT-FOUND", "notes/s1.md", "[brainstorm]", "NOT SEARCHED", "COVERED",
+                      "sections/g2.md", "pages/0a1b2c3d4e5f.txt"):
+            with self.subTest(token=token):
+                self.report(f"The record is here {token} [1].")
+                self.check()
+                self.assertEqual(self.kinds(), ["label-leak"])
+                self.assertIn(token, self.result["flags"][0]["detail"])
+
+    def test_spanish_report_end_to_end(self):
+        cases = {"es": ("El precio es 2,61 € por kWh [1].", "## Lo que no se sabe\n\nNo se sabe la fecha.",
+                        "## Fuentes\n[1] Título del informe 2023, 45 páginas https://a.es/x"),
+                 "en": ("The researcher reports a price of 2,61 € per kWh [1].",
+                        "## What is not known\n\nThe date is unknown.",
+                        "## Sources\n[1] Report title 2023, 45 pages https://a.es/x")}
+        for lang, (body, end, sources) in cases.items():
+            with self.subTest(lang=lang):
+                for path in self.run.joinpath("pages").glob("*"):
+                    path.unlink()
+                self.page("https://a.es/x", "Precio | 2,61 € | kWh")
+                text = f"# Informe\n\n{body}\n\n{vc.END_MARK}\n{end}\n\n{vc.SOURCES_MARK}\n{sources}\n"
+                (self.run / "report.md").write_text(text, encoding="utf-8")
+                (self.run / "evidence.md").write_text("# Evidence\n\nSource check: pending\nSource mix: pending\n",
+                                                      encoding="utf-8")
+                parsed_body, parsed_sources, parsed_end = vc.parse_report(text)
+                self.assertEqual(parsed_sources, {1: "https://a.es/x"})
+                self.assertEqual(parsed_body[-1], "")
+                self.assertIn(body, parsed_body)
+                self.assertEqual(parsed_end[0], end.splitlines()[0])
+                self.assertFalse(any("45" in line for line in parsed_body + parsed_end))
+                result = self.check()
+                self.assertEqual(self.kinds(), [])
+                self.assertEqual((result["matched"], result["figures"]), (1, 1))
+                evidence = (self.run / "evidence.md").read_text(encoding="utf-8")
+                self.assertIn(f"Source check: {result['summary']}", evidence)
+                self.assertIn(f"Source mix: {result['mix']}", evidence)
+                self.assertNotIn("pending", evidence)
+
+    def test_sources_fallback_without_marker(self):
+        text = ("# R\n\n## Pasos\n\n1. Uno.\n2. Dos.\n\nPrecio 2,61 € [1].\n\n## Referencias\n\n"
+                "[1] A https://a.org/1\n[2] B https://b.org/2\n[3] C https://c.org/3\n\n## Notas\n\nUna nota.\n")
+        body, sources, end = vc.parse_report(text)
+        self.assertEqual(sources, {1: "https://a.org/1", 2: "https://b.org/2", 3: "https://c.org/3"})
+        self.assertEqual(body[-1], "")
+        self.assertIn("2. Dos.", body)
+        self.assertFalse(any("a.org" in line or "Referencias" in line for line in body))
+        self.assertEqual(end, [])
 
     def test_uncited_number(self):
         self.page(URL1, "Fiyat 2,61 TL")
@@ -171,10 +227,10 @@ class CheckTests(RunCase):
 
     def test_summary_line_replaced_and_check_md(self):
         self.page(URL1, "Fiyat 2,61 TL")
-        self.report("Fiyat 2,61 TL [1].\n\n**Kaynak kontrolü:** pending")
+        self.report("Fiyat 2,61 TL [1].\n\n**Source check:** pending")
         result = self.check()
         text = (self.run / "report.md").read_text(encoding="utf-8")
-        self.assertIn("**Kaynak kontrolü:** script, page snapshots — 1 of 1 figures matched", text)
+        self.assertIn("**Source check:** script, page snapshots — 1 of 1 figures matched", text)
         self.assertNotIn("pending", text)
         self.assertIn(result["summary"], (self.run / "check.md").read_text(encoding="utf-8"))
 
@@ -292,20 +348,20 @@ class LabelTests(RunCase):
                   f'- B2 — "x y z" {URL2} (opened 2026-10-28; press unverified)\n')
         self.report("A [1]. B [2]. C [3]. D [4].",
                     sources=((1, URL1), (2, URL2), (3, WIKI), (4, "https://x.org/c"), (5, "https://x.org/d")))
-        (self.run / "evidence.md").write_text("# Evidence\n\n**Kaynak kontrolü:** pending\n"
-                                              "Kaynak dağılımı: pending\n", encoding="utf-8")
+        (self.run / "evidence.md").write_text("# Evidence\n\n**Source check:** pending\n"
+                                              "Source mix: pending\n", encoding="utf-8")
         result = self.check()
         mix = "1 primary, 0 official, 0 scholarly, 1 press, 1 lead, 1 unlabelled"
         self.assertEqual(result["mix"], mix)
         self.assertIn(f"Source mix: {mix}", (self.run / "check.md").read_text(encoding="utf-8"))
         evidence = (self.run / "evidence.md").read_text(encoding="utf-8")
-        self.assertIn(f"**Kaynak kontrolü:** {result['summary']}", evidence)
-        self.assertIn(f"Kaynak dağılımı: {mix}", evidence)
+        self.assertIn(f"**Source check:** {result['summary']}", evidence)
+        self.assertIn(f"Source mix: {mix}", evidence)
         self.assertNotIn("pending", evidence)
 
 
 OLD = ('# R\n\n## Özet\n\nKayıt 4.472 oldu [1]. Kurul "tarifeyi değiştirdi ve yeni dönem başladı" dedi [2-3].\n\n'
-       'Source check: x 1 of 2\n\n## Kaynaklar\n\n[1] A. https://a.org/1\n[2] B. https://b.org/2\n'
+       'Source check: x 1 of 2\n\n<!-- vafer:sources -->\n## Kaynaklar\n\n[1] A. https://a.org/1\n[2] B. https://b.org/2\n'
        '[3] C. https://c.org/3\n')
 
 
