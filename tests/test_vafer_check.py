@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import collections
+import contextlib
 import email.message
 import io
 import shutil
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
 from decimal import Decimal
+from unittest import mock
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -19,7 +24,7 @@ import vafer_check as vc  # noqa: E402
 URL1 = "https://www.epdk.gov.tr/tarifeler"
 URL2 = "https://example.org/report/"
 PROSE = "".join(f"<p>Paragraph {i}: the regulator published the full tariff table and the explanatory notes today.</p>"
-                for i in range(3))
+                for i in range(5))
 
 
 def values(text):
@@ -666,7 +671,24 @@ class FakeResponse(io.BytesIO):
         self.headers["Content-Type"] = ctype
 
 
+def http_error(url, code, retry_after=None):
+    headers = email.message.Message()
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return urllib.error.HTTPError(url, code, "busy", headers, None)
+
+
 class FetchTests(RunCase):
+    def fetch(self, urls, opener=None, find=None):
+        """Run cmd_fetch with a fake urlopen; return the printed lines."""
+        out = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            if opener:
+                stack.enter_context(mock.patch.object(vc, "urlopen", opener))
+            stack.enter_context(contextlib.redirect_stdout(out))
+            vc.cmd_fetch(self.run, urls, find)
+        return out.getvalue().splitlines()
+
     def test_file_url_windows_1254_and_table_rows(self):
         html = ('<html><head><meta charset="windows-1254"><title>t</title><script>var a=1;</script></head>'
                 '<body><nav>menu</nav><p>Elektrik tarifeleri güncellendi.</p>'
@@ -691,53 +713,192 @@ class FetchTests(RunCase):
         calls = []
 
         def fake_urlopen(req, timeout):
-            calls.append(req.get_header("User-agent"))
             if req.full_url.endswith("/bad"):
                 raise urllib.error.URLError("no route")
+            calls.append(req.get_header("User-agent"))
             if len(calls) == 1:
                 raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", None, None)
             return FakeResponse(("<p>Çalışma ücreti 7,25 TL</p>" + PROSE).encode("iso-8859-9"),
                                 "text/html; charset=iso-8859-9")
 
-        original = vc.urlopen
-        vc.urlopen = fake_urlopen
-        out = io.StringIO()
-        try:
-            stdout, sys.stdout = sys.stdout, out
-            vc.cmd_fetch(self.run, ["https://example.org/ok", "https://example.org/bad"])
-        finally:
-            sys.stdout = stdout
-            vc.urlopen = original
-        lines = out.getvalue().splitlines()
-        self.assertTrue(lines[0].startswith("ok ") and lines[1].startswith("failed "), lines)
+        lines = self.fetch(["https://example.org/ok", "https://example.org/bad"], fake_urlopen)
+        self.assertTrue(lines[0].startswith("ok ") and lines[1].startswith("URLError"), lines)
         self.assertNotEqual(calls[0], calls[1])
         self.assertIn("Çalışma ücreti 7,25 TL", vc.load_snapshots(self.run)["example.org/ok"])
-        index = (self.run / "pages" / "index.tsv").read_text(encoding="utf-8")
-        self.assertIn("https://example.org/bad\t\t", index)
+        self.assertFalse((self.run / "pages" / "index.tsv").exists())
 
     def test_empty_boilerplate_doc_binary_and_utf16(self):
         bodies = {"empty": (b"<p>Loading...</p>", "text/html"),
                   "nav": ("".join(f"<li>Menu item {i}</li>" for i in range(40)).encode(), "text/html"),
                   "doc": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64, "application/octet-stream"),
                   "u16": (("Çalışma ücreti 7,25 TL\n" + PROSE).encode("utf-16"), "text/html; charset=iso-8859-9")}
-        original = vc.urlopen
-        vc.urlopen = lambda req, timeout: FakeResponse(*bodies[req.full_url.rsplit("/", 1)[1]])
-        out = io.StringIO()
-        try:
-            stdout, sys.stdout = sys.stdout, out
-            vc.cmd_fetch(self.run, [f"https://example.org/{k}" for k in bodies])
-        finally:
-            sys.stdout = stdout
-            vc.urlopen = original
-        lines = out.getvalue().splitlines()
-        self.assertTrue(lines[0].startswith("failed empty (saved "), lines)
-        self.assertTrue(lines[1].startswith("failed boilerplate (saved "), lines)
-        self.assertEqual(lines[2], "failed doc-binary")
+        lines = self.fetch([f"https://example.org/{k}" for k in bodies],
+                           lambda req, timeout: FakeResponse(*bodies[req.full_url.rsplit("/", 1)[1]]))
+        self.assertTrue(lines[0].startswith("empty ") and ".txt" in lines[0], lines)
+        self.assertTrue(lines[1].startswith("boilerplate ") and ".txt" in lines[1], lines)
+        self.assertEqual(lines[2], "doc-binary - 0")
         self.assertTrue(lines[3].startswith("ok "), lines)
         self.assertEqual(len(list((self.run / "pages").glob("*.txt"))), 3)
         snaps = vc.load_snapshots(self.run)
         self.assertEqual(list(snaps), ["example.org/u16"])
         self.assertIn("Çalışma ücreti 7,25 TL", snaps["example.org/u16"])
+
+    def test_fetch_status_header_and_skip_existing_ok(self):
+        calls = []
+
+        def opener(req, timeout):
+            calls.append((req.full_url, timeout))
+            return FakeResponse(("<h1>Tarife duyurusu</h1>" + PROSE).encode(), "text/html")
+
+        lines = self.fetch(["https://example.org/t"], opener)
+        status, name, chars, title = lines[0].split(" ", 3)
+        self.assertEqual((status, title), ("ok", "Tarife duyurusu"))
+        self.assertGreater(int(chars), 400)
+        raw = (self.run / "pages" / name).read_text(encoding="utf-8")
+        self.assertRegex(raw, r"^URL: https://example.org/t\nFetched: .+\nStatus: ok\nCharset: .+\nSHA256: \w+\n\n")
+        self.assertEqual(calls, [("https://example.org/t", 20)])
+        again = self.fetch(["https://example.org/t/", "https://www.example.org/t#p3"], opener)
+        self.assertEqual(again, [lines[0], lines[0]])
+        self.assertEqual(len(calls), 1)
+        self.assertFalse((self.run / "pages" / "index.tsv").exists())
+        self.assertEqual(list(vc.load_snapshots(self.run)), ["example.org/t"])
+
+    def test_concurrent_fetch_no_lost_snapshots(self):
+        counts, lock = collections.Counter(), threading.Lock()
+
+        def opener(req, timeout):
+            with lock:
+                counts[req.full_url] += 1
+            time.sleep(0.02)
+            return FakeResponse((f"<p>Page {req.full_url}</p>" + PROSE).encode(), "text/html")
+
+        first = [f"https://h{i % 3}.org/p{i}" for i in range(12)]
+        second = [f"https://h{i % 3}.org/p{i}" for i in range(6, 18)]
+        out = io.StringIO()
+        with mock.patch.object(vc, "urlopen", opener), contextlib.redirect_stdout(out):
+            workers = [threading.Thread(target=vc.cmd_fetch, args=(self.run, urls)) for urls in (first, second)]
+            for w in workers:
+                w.start()
+            for w in workers:
+                w.join()
+        self.assertEqual(sorted(counts), sorted(set(first + second)))
+        self.assertEqual(set(counts.values()), {1})
+        self.assertEqual(len(vc.load_snapshots(self.run)), 18)
+        self.assertEqual(out.getvalue().count("ok "), 24)
+        leftovers = [p.name for p in (self.run / "pages").iterdir() if not p.name.endswith(".txt")]
+        self.assertEqual(leftovers, [])
+
+    def test_host_limit_two_at_a_time(self):
+        state, lock = {"now": 0, "peak": 0}, threading.Lock()
+
+        def opener(req, timeout):
+            with lock:
+                state["now"] += 1
+                state["peak"] = max(state["peak"], state["now"])
+            time.sleep(0.03)
+            with lock:
+                state["now"] -= 1
+            return FakeResponse(PROSE.encode(), "text/html")
+
+        self.fetch([f"https://one.org/p{i}" for i in range(6)], opener)
+        self.assertEqual(state["peak"], 2)
+
+    def test_find_passages_turkish_folding_and_limits(self):
+        lines = [f"Satır {i}: genel bilgi ve duyurular burada yer alır." for i in range(60)]
+        for i in (5, 20, 35, 50):
+            lines[i] = f"İSKİ baraj doluluk oranı {i} yüzde olarak açıklandı. " * 8
+        text = "\n".join(lines)
+        found = vc.passages(text, ["iski", "baraj"])
+        self.assertEqual(len(found), 3)
+        self.assertLessEqual(sum(map(len, found)), 1500)
+        self.assertRegex(found[0], r"^\d+: ")
+        self.assertIn("İSKİ", found[0])
+        self.assertEqual(vc.passages(text, ["yok-böyle-bir-şey"]), [])
+        short = vc.passages("a\nb\nİski raporu\nc\nd\ne\nf", ["ISKI"])
+        self.assertEqual(short, ["1: a\n2: b\n3: İski raporu\n4: c\n5: d"])
+
+        def opener(req, timeout):
+            return FakeResponse(("<p>İSKİ baraj doluluk oranı yüzde 41 olarak açıklandı.</p>" + PROSE).encode(),
+                                "text/html")
+
+        out = self.fetch(["https://iski.istanbul/baraj"], opener, find="iski|baraj")
+        self.assertTrue(out[0].startswith("ok "), out)
+        self.assertTrue(any("İSKİ baraj doluluk" in line for line in out[1:]), out)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(vc.main(["find", str(self.run), "BARAJ"]), 0)
+        self.assertIn("İSKİ baraj doluluk", buf.getvalue())
+        self.assertIn("iski.istanbul/baraj", buf.getvalue())
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            vc.cmd_find(self.run, "baraj", ["https://other.org/x"])
+        self.assertNotIn("İSKİ", buf.getvalue())
+
+    def test_retry_after_on_429_and_503(self):
+        calls, sleeps = collections.Counter(), []
+
+        def opener(req, timeout):
+            calls[req.full_url] += 1
+            if req.full_url.endswith("/busy"):
+                raise http_error(req.full_url, 503)
+            if calls[req.full_url] == 1:
+                raise http_error(req.full_url, 429, "30")
+            if calls[req.full_url] == 2:
+                raise http_error(req.full_url, 503)
+            return FakeResponse(PROSE.encode(), "text/html")
+
+        with mock.patch.object(vc, "sleep", sleeps.append):
+            lines = self.fetch(["https://a.org/slow"], opener)
+            self.assertTrue(lines[0].startswith("ok "), lines)
+            self.assertEqual(sleeps, [10, 5])
+            sleeps.clear()
+            lines = self.fetch(["https://a.org/busy"], opener)
+        self.assertTrue(lines[0].startswith("http-503 "), lines)
+        self.assertEqual(sleeps, [2, 5])
+        self.assertEqual(calls["https://a.org/busy"], 3)
+
+    def test_table_rows_count_as_content(self):
+        table = "<table>" + "".join(f"<tr><td>İlçe {i}</td><td>{i * 37}</td><td>2,{i:02} TL</td></tr>"
+                                    for i in range(30)) + "</table>"
+        menu = "<ul>" + "".join(f'<li><a href="/m{i}">Menü {i}</a></li>' for i in range(50)) + "</ul>"
+        bodies = {"table": table, "menu": menu}
+        lines = self.fetch(["https://x.org/table", "https://x.org/menu"],
+                           lambda req, timeout: FakeResponse(bodies[req.full_url.rsplit("/", 1)[1]].encode(),
+                                                             "text/html"))
+        self.assertTrue(lines[0].startswith("ok "), lines)
+        self.assertTrue(lines[1].startswith("boilerplate "), lines)
+
+    def pdf_fetch(self, which):
+        raw, runs = b"%PDF-1.4 fake", []
+
+        def fake_run(args, **kwargs):
+            runs.append(args)
+            text = "LAYOUT col1     col2\n" if "-layout" in args else ""
+            Path(args[-1]).write_text(text + "Reading order paragraph about water tariffs in the city. " * 12,
+                                      encoding="utf-8")
+
+        with mock.patch.object(vc.shutil, "which", lambda name: which), \
+                mock.patch.object(vc.subprocess, "run", fake_run):
+            lines = self.fetch(["https://x.org/doc.pdf"], lambda req, timeout: FakeResponse(raw, "application/pdf"))
+        return lines, runs, raw
+
+    def test_pdf_reading_order_and_layout_copy(self):
+        lines, runs, _ = self.pdf_fetch("pdftotext")
+        self.assertTrue(lines[0].startswith("ok "), lines)
+        self.assertNotIn("-layout", runs[0])
+        self.assertIn("-layout", runs[1])
+        self.assertEqual(len(list((self.run / "pages").glob("*.layout.txt"))), 1)
+        snaps = vc.load_snapshots(self.run)
+        self.assertEqual(list(snaps), ["x.org/doc.pdf"])
+        self.assertIn("Reading order paragraph", snaps["x.org/doc.pdf"])
+        self.assertIn("LAYOUT col1", snaps["x.org/doc.pdf"])
+
+    def test_pdf_saved_without_pdftotext(self):
+        lines, runs, raw = self.pdf_fetch(None)
+        self.assertEqual(runs, [])
+        self.assertTrue(lines[0].startswith("pdf-saved ") and ".pdf" in lines[0], lines)
+        self.assertEqual([p.read_bytes() for p in (self.run / "pages").glob("*.pdf")], [raw])
+        self.assertEqual(vc.load_snapshots(self.run), {})
 
 
 if __name__ == "__main__":

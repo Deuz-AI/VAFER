@@ -2,27 +2,28 @@
 """vafer_check: snapshot cited pages and check a vafer-research report against them.
 
 Usage:
-  python scripts/vafer_check.py fetch <run> <url> [<url> ...]
+  python scripts/vafer_check.py fetch <run> [--find "a|b|c"] <url> [<url> ...]
+  python scripts/vafer_check.py find <run> "a|b|c" [<url> ...]
   python scripts/vafer_check.py check <run> [--section <id>]
   python scripts/vafer_check.py assemble <run> [--title "<Sources heading>"]
   python scripts/vafer_check.py diff <old.md> <new.md>
 
-Stdlib only. `check` never touches the network and is advisory (exit 0), except when the run folder,
-report.md or the section draft is missing (exit 2). `check --section` writes nothing. `assemble` builds report.md
-out of the sections/ drafts (exit 2 when that folder is missing). `diff` exits 1 when an edit lost or changed a number,
-citation, quote or source entry, or detached a citation; additions alone pass.
+Stdlib only; only `fetch` uses the network. `check` is advisory (exit 0) but exits 2 when report.md or the section
+draft is missing; `check --section` writes nothing. `assemble` exits 2 without sections/. `diff` exits 1 when an edit
+lost or changed a number, citation, quote or source entry, or detached a citation; additions alone pass.
 """
 from __future__ import annotations
 
-import argparse, codecs, datetime as dt, hashlib, html.parser, itertools, re, shutil, subprocess, sys
-import tempfile, unicodedata, urllib.error, urllib.parse, urllib.request
+import argparse, codecs, concurrent.futures, contextlib, datetime as dt, hashlib, html.parser, itertools, os, re
+import shutil, subprocess, sys, tempfile, threading, time, unicodedata, urllib.error, urllib.parse, urllib.request
 from collections import namedtuple
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
 BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0"
 PLAIN_UA = "vafer-check/0.1 (python-urllib)"
-urlopen = urllib.request.urlopen  # tests monkeypatch this
+urlopen, sleep = urllib.request.urlopen, time.sleep  # tests monkeypatch these
+HOSTS = {}  # host -> Semaphore(2)
 
 BOMS = ((codecs.BOM_UTF8, "utf-8-sig"), (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
 URL_RX = re.compile(r"https?://[^\s<>()\[\]\"“”'«»]+|file:///[^\s<>()\[\]\"“”'«»]+")
@@ -101,18 +102,15 @@ def decode_bytes(data: bytes, hints=()) -> tuple:
 def read_text(path) -> str:
     """Read a local text file, honouring UTF-8/UTF-16 BOMs."""
     return decode_bytes(Path(path).read_bytes())[0]
-
 def write_text(path, text: str) -> None:
     """Write UTF-8 without newline translation."""
     Path(path).write_text(text, encoding="utf-8", newline="")
-
 def squash(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 def norm_url(url: str) -> str:
     """Normalize a URL: no scheme, www., fragment, trailing slash or utm_* params."""
-    url = url.strip().rstrip(".,;:")
-    parts = urllib.parse.urlsplit(url)
+    parts = urllib.parse.urlsplit(url.strip().rstrip(".,;:"))
     query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
              if not k.lower().startswith("utm_")]
     host = parts.netloc.lower().removeprefix("www.")
@@ -134,16 +132,14 @@ class _HTMLText(html.parser.HTMLParser):
             self.skip += 1
         elif self.skip:
             return
-        elif tag == "tr":
-            self.end_row()
-            self.flush()
-            self.row = []
-        elif tag in ("td", "th"):
-            if self.row is None:
+        elif tag in ("tr", "td", "th"):
+            if tag == "tr" or self.row is None:  # a cell outside a row opens one
+                self.end_row()
                 self.flush()
                 self.row = []
-            self.close_cell()
-            self.cell = []
+            if tag != "tr":
+                self.close_cell()
+                self.cell = []
         elif tag == "br" and self.cell is not None:
             self.cell.append(" ")
         elif tag in self.BLOCK and self.cell is None:
@@ -172,8 +168,7 @@ class _HTMLText(html.parser.HTMLParser):
             self.lines.append(" | ".join(self.row))
         self.row = None
     def flush(self):
-        text = squash("".join(self.buf))
-        self.buf = []
+        text, self.buf = squash("".join(self.buf)), []
         if text:
             self.lines.append(text)
     def text(self) -> str:
@@ -183,84 +178,145 @@ class _HTMLText(html.parser.HTMLParser):
         return "\n".join(self.lines)
 
 def html_to_text(markup: str) -> str:
-    parser = _HTMLText()
-    parser.feed(markup)
+    (parser := _HTMLText()).feed(markup)
     return parser.text()
 
-def pdf_text(raw: bytes):
-    """Run `pdftotext -layout`; return None when it is unavailable or fails."""
-    exe = shutil.which("pdftotext")
-    if not exe:
+def pdf_text(raw: bytes, layout: bool = False) -> str | None:
+    """Run pdftotext in reading order (or with `-layout`); None when it is unavailable or fails."""
+    if not (exe := shutil.which("pdftotext")):
         return None
     with tempfile.TemporaryDirectory() as tmp:
         src, out = Path(tmp) / "in.pdf", Path(tmp) / "out.txt"
         src.write_bytes(raw)
         try:
-            subprocess.run([exe, "-layout", "-enc", "UTF-8", str(src), str(out)], check=True,
+            subprocess.run([exe, *["-layout"][:layout], "-enc", "UTF-8", str(src), str(out)], check=True,
                            capture_output=True, timeout=120)
             return read_text(out)
         except (OSError, subprocess.SubprocessError):
             return None
 
 def download(url: str):
-    """Return (raw, content_type, header_charset) or raise RuntimeError(reason)."""
-    reason = "error"
-    for agent in (BROWSER_UA, PLAIN_UA):
-        req = urllib.request.Request(url, headers={"User-Agent": agent, "Accept": "*/*"})
-        try:
-            with urlopen(req, timeout=30) as resp:
-                return resp.read(), resp.headers.get_content_type(), resp.headers.get_content_charset()
-        except urllib.error.HTTPError as exc:
-            reason = f"http-{exc.code}"
-            exc.close()
-            if exc.code not in (403, 429):
-                break
-        except Exception as exc:  # one bad URL must not stop the batch
-            reason = squash(f"{type(exc).__name__}: {getattr(exc, 'reason', exc)}").replace(" ", "_")
+    """(raw, content_type, header_charset), or raise RuntimeError(reason). At most 2 at a time per host; a 403
+    retries with a plain agent; 429/503 wait Retry-After (at most 10 s), else 2 s then 5 s."""
+    agents, waits = [BROWSER_UA, PLAIN_UA], [2, 5]
+    with HOSTS.setdefault(urllib.parse.urlsplit(url).hostname or "", threading.Semaphore(2)):
+        while True:
+            try:
+                with urlopen(urllib.request.Request(url, headers={"User-Agent": agents[0], "Accept": "*/*"}), timeout=20) as resp:
+                    return resp.read(), resp.headers.get_content_type(), resp.headers.get_content_charset()
+            except urllib.error.HTTPError as exc:
+                after = str((exc.headers or {}).get("Retry-After") or "").strip()
+                exc.close()
+                if exc.code in (429, 503) and (wait := waits and waits.pop(0)):
+                    sleep(min(int(after), 10) if after.isdigit() else wait)
+                elif exc.code == 403 and len(agents) > 1:
+                    agents.pop(0)
+                else:
+                    raise RuntimeError(f"http-{exc.code}") from None
+            except Exception as exc:  # one bad URL must not stop the batch
+                raise RuntimeError(squash(f"{type(exc).__name__}: {getattr(exc, 'reason', exc)}").replace(" ", "_"))
+
+@contextlib.contextmanager
+def locked(lock: Path):
+    """Hold `lock` (exclusive create), so one fetcher, thread or process, works on a URL at a time; after 120 s of
+    waiting the lock counts as stale."""
+    start = time.time()
+    while time.time() - start < 120:
+        with contextlib.suppress(FileExistsError, PermissionError):
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             break
-    raise RuntimeError(reason)
-
-def fetch_one(url: str, pages: Path):
-    """Fetch one URL into pages/; return (status, file, chars)."""
+        time.sleep(0.05)
     try:
-        raw, ctype, header_cs = download(url)
-    except RuntimeError as exc:
-        return str(exc), "", 0
-    if raw.startswith(OLE_MAGIC) or ctype == "application/msword":
-        return "doc-binary", "", 0
-    if ctype == "application/pdf" or raw.lstrip()[:4] == b"%PDF":
-        text, charset = pdf_text(raw), "pdf"
-        if text is None:
-            return "pdf-no-text", "", 0
-    else:
-        meta = re.search(rb"<meta[^>]+charset=[\"']?\s*([\w.:-]+)", raw[:8192], re.I)
-        hints = [h for h in (header_cs, meta and meta.group(1).decode("ascii", "ignore")) if h]
-        text, charset = decode_bytes(raw, hints)
-        if "html" in ctype or re.search(r"<(html|body|p|div|table)\b", text[:4096], re.I):
-            text = html_to_text(text)
-    name = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12] + ".txt"
-    stamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-    head = f"URL: {url}\nFetched: {stamp}\nCharset: {charset}\nSHA256: {hashlib.sha256(raw).hexdigest()}\n\n"
-    body = text.replace("\r\n", "\n")
-    write_text(pages / name, head + body)
-    if len(body.strip()) < 200:
-        return "empty", name, len(text)
-    if sum(len(line.strip()) >= 80 for line in body.splitlines()) < 3:
-        return "boilerplate", name, len(text)  # mostly menus and link lists
-    return "ok", name, len(text)
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
 
-def cmd_fetch(run: Path, urls) -> int:
+def save(path: Path, data) -> None:
+    """Write whole to a temp file, then move it into place."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data) if isinstance(data, bytes) else write_text(tmp, data)
+    os.replace(tmp, path)
+
+def snap_head(path: Path) -> tuple:
+    """(header dict, body) of a snapshot file; an empty header when it has none."""
+    head, _, body = (text := read_text(path).replace("\r\n", "\n")).partition("\n\n")
+    return (dict(ln.partition(": ")[::2] for ln in head.splitlines()), body) if text.startswith("URL:") else ({}, text)
+
+def first_line(body: str) -> str:
+    return next((squash(ln)[:120] for ln in body.splitlines() if ln.strip()), "")
+def page_status(body: str) -> str:
+    """`empty` under 200 body characters, `boilerplate` under 400 content characters (40+ character lines, table rows)."""
+    rows = [s for s in map(str.strip, body.splitlines()) if len(s) >= 40 or len(re.split(r"\||\t", s.strip("|"))) > 1]
+    return "empty" if len(body.strip()) < 200 else "boilerplate" if sum(map(len, rows)) < 400 else "ok"
+
+def fetch_one(url: str, pages: Path) -> tuple:
+    """Fetch one URL into pages/ unless it has an ok snapshot; return (status, file, chars, title)."""
+    path = pages / (hashlib.sha1(norm_url(url).encode("utf-8")).hexdigest()[:12] + ".txt")
+    with locked(path.with_suffix(".lock")):
+        if path.exists() and (old := snap_head(path))[0].get("Status") == "ok":
+            return "ok", path.name, len(old[1]), first_line(old[1])
+        try:
+            raw, ctype, header_cs = download(url)
+        except RuntimeError as exc:
+            return str(exc), "-", 0, ""
+        if raw.startswith(OLE_MAGIC) or ctype == "application/msword":
+            return "doc-binary", "-", 0, ""
+        if ctype == "application/pdf" or raw.lstrip()[:4] == b"%PDF":
+            if (text := pdf_text(raw)) is None:  # left for the host's PDF reader
+                save(path.with_suffix(".pdf"), raw)
+                return "pdf-saved", path.with_suffix(".pdf").name, len(raw), ""
+            if layout := pdf_text(raw, layout=True):
+                save(path.with_name(path.stem + ".layout.txt"), layout)
+            charset = "pdf"
+        else:
+            meta = re.search(rb"<meta[^>]+charset=[\"']?\s*([\w.:-]+)", raw[:8192], re.I)
+            text, charset = decode_bytes(raw, [header_cs, meta and meta.group(1).decode("ascii", "ignore")])
+            if "html" in ctype or re.search(r"<(html|body|p|div|table)\b", text[:4096], re.I):
+                text = html_to_text(text)
+        body = text.replace("\r\n", "\n")
+        status, stamp = page_status(body), dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+        save(path, f"URL: {url}\nFetched: {stamp}\nStatus: {status}\nCharset: {charset}\n"
+                   f"SHA256: {hashlib.sha256(raw).hexdigest()}\n\n{body}")
+        return status, path.name, len(body), first_line(body)
+
+def passages(text: str, terms: list[str], limit: int = 3, max_chars: int = 1500) -> list[str]:
+    """Line-numbered windows (±2 lines) around the lines that hit the most terms after Turkish case folding, best
+    first, at most `max_chars` in all."""
+    terms, lines = [tr_fold(t.strip()) for t in terms if t.strip()], text.split("\n")
+    hits = sorted(((len([t for t in terms if t in f]), sum(map(f.count, terms)), -i)
+                   for i, f in enumerate(map(tr_fold, lines))), reverse=True)
+    out, taken, room = [], [], max_chars
+    for lo, hi in ((max(0, -h[2] - 2), min(len(lines), 3 - h[2])) for h in hits if h[0]):
+        if len(out) < limit and room > 0 and not any(lo < b and a < hi for a, b in taken):
+            block = "\n".join(f"{n + 1}: {lines[n][:299] + '…' * (len(lines[n]) > 300)}" for n in range(lo, hi)
+                              if lines[n].strip())[:room]
+            out, room, taken = out + [block], room - len(block), taken + [(lo, hi)]
+    return out
+
+def show(body: str, terms: str) -> list:
+    """Print the passages of one snapshot body, indented; return them."""
+    for block in (found := passages(body, terms.split("|"))):
+        print("  " + block.replace("\n", "\n  "))
+    return found
+
+def cmd_fetch(run: Path, urls, find: str | None = None) -> int:
+    """Fetch in parallel (8 workers); print `<status> <file> <chars> <title>` per URL, and passages with --find."""
     pages = run / "pages"
     pages.mkdir(parents=True, exist_ok=True)
-    index = pages / "index.tsv"
-    lines = read_text(index).splitlines() if index.exists() else []
-    rows = {parts[0]: parts for parts in (line.split("\t") for line in lines) if parts[0]}
-    for url in urls:
-        status, name, chars = fetch_one(url, pages)
-        rows[url] = [url, name, status, dt.date.today().isoformat()]
-        saved = f" (saved {name}, {chars} chars)" if name else ""
-        print(f"ok {name} {chars}" if status == "ok" else f"failed {status}{saved}")
-    write_text(index, "".join("\t".join(r) + "\n" for r in rows.values()))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        for res in list(pool.map(lambda url: fetch_one(url, pages), urls)):
+            print(" ".join(map(str, res)).strip())
+            if find and res[0] == "ok":
+                show(snap_head(pages / res[1])[1], find)
+    return 0
+
+def cmd_find(run: Path, terms: str, urls=()) -> int:
+    """Print passages over the existing ok snapshots: all of them, or only those of `urls`."""
+    want = {norm_url(u) for u in urls}
+    for key, text in load_snapshots(run).items():
+        if not want or key in want:
+            print(key)
+            show(text, terms) or print("  (no hit)")
     return 0
 
 def parse_number(token: str, negative=False) -> list:
@@ -299,7 +355,6 @@ def spelled(m) -> list:
 def roman(s: str) -> int:
     vals = [{"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}[c] for c in s.upper()]
     return sum(-v if i + 1 < len(vals) and v < vals[i + 1] else v for i, v in enumerate(vals))
-
 def special(m, text: str):
     """Key of a one-token figure ("date 1923-10-29", "century 16", "time 3:02"), or None to read it as numbers."""
     g = m.groupdict()
@@ -334,17 +389,14 @@ def numbers(text: str, masked=False) -> list:
 def rounds_to(src, value, places: int) -> bool:
     if not isinstance(src, Decimal) or not isinstance(value, Decimal):
         return src == value  # one-token keys match only themselves
-    try:
+    with contextlib.suppress(ArithmeticError):
         return src == value or src.quantize(Decimal(1).scaleb(-places), ROUND_HALF_UP) == value
-    except ArithmeticError:
-        return False
+    return False
 
 def num_matches(num: Num, pool) -> bool:
     return any(rounds_to(s, v, d) for v, d in num.cands for s, _ in pool)
-
 def is_year(num: Num) -> bool:
     return num.text.isdigit() and len(num.text) == 4 and 1900 <= int(num.text) <= 2100
-
 def is_small_int(num: Num) -> bool:
     return num.text.lstrip("-−").isdigit() and abs(int(num.text.lstrip("-−"))) <= 10
 
@@ -352,10 +404,8 @@ def evaluate(vals, ops):
     """Evaluate with usual precedence (× ÷ before + −)."""
     terms = [vals[0]]
     for op, val in zip(ops, vals[1:]):
-        if op == "*":
-            terms[-1] *= val
-        elif op == "/":
-            terms[-1] /= val
+        if op in "*/":
+            terms[-1] = terms[-1] * val if op == "*" else terms[-1] / val
         else:
             terms.append(val if op == "+" else -val)
     return sum(terms)
@@ -396,19 +446,15 @@ def find_equations(masked: str, nums: list) -> list:
 
 def qnorm(text: str) -> str:
     return squash(unicodedata.normalize("NFC", text).translate(QMAP))
-
 def tr_fold(text: str) -> str:
     return text.replace("İ", "i").replace("I", "i").replace("ı", "i").casefold()
 
 def quote_status(quote: str, texts) -> str:
     """'exact', 'near' (Turkish-aware case fold) or 'missing'."""
     parts = [p for p in (q.strip(" .,;:") for q in re.split(r"\.\.\.|…|\[\.\.\.\]", qnorm(quote))) if p]
-    hay = [qnorm(t) for t in texts]
-    if all(any(p in h for h in hay) for p in parts):
-        return "exact"
-    folded = [tr_fold(h) for h in hay]
-    if all(any(tr_fold(p) in h for h in folded) for p in parts):
-        return "near"
+    for status, fold in (("exact", str), ("near", tr_fold)):
+        if all(any(fold(p) in h for h in [fold(qnorm(t)) for t in texts]) for p in parts):
+            return status
     return "missing"
 
 def expand_cites(inner: str) -> list:
@@ -455,33 +501,24 @@ def lead_domain(url: str) -> bool:
     host = (urllib.parse.urlsplit(url.strip()).hostname or "").removeprefix("www.")
     return any(host == d or host.endswith("." + d) for d in LEAD_DOMAINS)
 
-def snapshot_body(text: str) -> str:
-    text = text.replace("\r\n", "\n")
-    return text.split("\n\n", 1)[1] if text.startswith("URL:") and "\n\n" in text else text
-
 def load_snapshots(run: Path) -> dict:
-    """Snapshot texts keyed by normalized URL, via index.tsv, then file headers."""
-    pages, snaps, failed = run / "pages", {}, set()
-    index = pages / "index.tsv"
-    if index.exists():
-        for line in read_text(index).splitlines():
-            parts = line.split("\t")
-            if len(parts) >= 3 and parts[1] and parts[2] != "ok":
-                failed.add(parts[1])  # saved for inspection only (empty / boilerplate)
-            elif len(parts) >= 3 and parts[1] and (pages / parts[1]).exists():
-                snaps[norm_url(parts[0])] = snapshot_body(read_text(pages / parts[1]))
+    """Ok snapshot texts, each with its PDF `-layout` copy if any, keyed by normalized URL. The status comes from
+    the header, else from a legacy index.tsv; layout copies have no header."""
+    pages, snaps = run / "pages", {}
+    rows = [ln.split("\t") for ln in read_text(index).splitlines()] if (index := pages / "index.tsv").exists() else []
+    failed = {p[1] for p in rows if len(p) >= 3 and p[1] and p[2] != "ok"}  # saved for inspection only
     for path in sorted(pages.glob("*.txt")) if pages.exists() else []:
-        if path.name not in failed and (text := read_text(path)).startswith("URL:"):
-            snaps.setdefault(norm_url(text.split("\n", 1)[0][4:].strip()), snapshot_body(text))
+        head, body = snap_head(path)
+        if "URL" in head and head.get("Status", "ok") == "ok" and path.name not in failed:
+            lay = path.with_name(path.stem + ".layout.txt")
+            snaps.setdefault(norm_url(head["URL"]), body + ("\n\n" + read_text(lay) if lay.exists() else ""))
     return snaps
 
 def is_entry(line: str) -> bool:
     return bool(SOURCE_ENTRY.match(line) and URL_RX.search(line))
-
 def sources_start(lines) -> int | None:
     """Line the sources follow: SOURCES_MARK, else the last heading mostly followed by `[n] ... URL` lines."""
-    marks = [i for i, line in enumerate(lines) if line.strip() == SOURCES_MARK]
-    if marks:
+    if marks := [i for i, line in enumerate(lines) if line.strip() == SOURCES_MARK]:
         return marks[-1]
     for i in reversed([i for i, line in enumerate(lines) if HEADING.match(line)]):
         rest = [line for line in lines[i + 1:] if line.strip()]
@@ -551,12 +588,10 @@ class Checker:
     def labels_of(self, url: str) -> list:
         return [lab for lab, _ in self.labels.get(norm_url(url), []) if lab and lab != "derived"]
     def is_lead(self, url: str) -> bool:
-        labs = self.labels_of(url)
-        return all(lab == "lead" for lab in labs) if labs else lead_domain(url)
+        return all(lab == "lead" for lab in labs) if (labs := self.labels_of(url)) else lead_domain(url)
     def source_class(self, url: str) -> str:
         """Dominant receipt label (ties go to the stronger label); lead-domain or unlabelled without one."""
-        labs = self.labels_of(url)
-        if not labs:
+        if not (labs := self.labels_of(url)):
             return "lead" if lead_domain(url) else "unlabelled"
         return max(MIX[:5], key=lambda lab: (labs.count(lab), -MIX.index(lab)))
     def texts(self, urls) -> list:
@@ -586,16 +621,13 @@ class Checker:
         cited = [n for _, ns in cites for n in ns]
         scope = cited or list(borrowed)
         urls = [sources[n] for n in scope if n in sources]
-        nums = numbers(masked, masked=True)
-        used = set()
+        nums, used = numbers(masked, masked=True), set()
         uncited = "uncited-table" if sentence.startswith("|") else "uncited"
         for chain, ops, result, eq_pos in find_equations(masked, nums):
             used.update(n.start for n in chain + [result])
             ok, got = equation_ok(chain, ops, result)
-            if ok:
-                self.eq_ok += 1
-            else:
-                self.eq_bad += 1
+            self.eq_ok, self.eq_bad = self.eq_ok + ok, self.eq_bad + (not ok)
+            if not ok:
                 self.flag("equation-wrong", sentence, urls,
                           f"computed {got:f} but report says {result.text.strip()}" if got is not None
                           else "could not evaluate")
@@ -615,14 +647,9 @@ class Checker:
             for num in rest:
                 self.check_number(num, urls, sentence)
             ev_urls = [u for u in urls if self.has_evidence(u)]
-            for m in QUOTE_RX.finditer(sentence):
-                quote = next(g for g in m.groups() if g)
-                if len(quote.split()) < 4 or not ev_urls:
-                    continue
-                status = quote_status(quote, self.texts(ev_urls))
-                if status != "exact":
-                    kind, detail = QUOTE_FLAGS[status]
-                    self.flag(kind, sentence, ev_urls, f"“{excerpt(quote, 80)}”: {detail}")
+            for quote in (next(g for g in m.groups() if g) for m in QUOTE_RX.finditer(sentence) if ev_urls):
+                if len(quote.split()) >= 4 and (status := quote_status(quote, self.texts(ev_urls))) != "exact":
+                    self.flag(QUOTE_FLAGS[status][0], sentence, ev_urls, f"“{excerpt(quote, 80)}”: {QUOTE_FLAGS[status][1]}")
         else:
             loose_nums = [n.text.strip() for n in rest if not is_year(n) and not is_small_int(n)]
             if loose_nums:
@@ -682,19 +709,16 @@ def old_dispositions(path: Path) -> dict:
     for line in read_text(path).splitlines() if path.exists() else []:
         cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
         if len(cells) >= 7 and re.fullmatch(r"F\d+", cells[0]):
-            disp = " | ".join(cells[6:]).strip()
-            if disp.removeprefix("disposition:").strip():
+            if (disp := " | ".join(cells[6:]).strip()).removeprefix("disposition:").strip():
                 old.setdefault((cells[2], cells[3]), []).append(disp)
     return old
 
 def plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
-
 def check(run: Path) -> dict:
     """Run every check; write check.md and update the Source check line."""
     report_path = run / "report.md"
-    text = read_text(report_path)
-    body, sources, end = parse_report(text)
+    body, sources, end = parse_report(read_text(report_path))
     checker = Checker(run)
     h2 = [i for i, line in enumerate(body) if line.startswith("## ")]
     checker.scan(body, sources, end, h2[1] if len(h2) > 1 else len(body))  # first section: before the second `## `
@@ -710,27 +734,23 @@ def check(run: Path) -> dict:
     cited_urls = {norm_url(sources[n]): sources[n] for n in checker.first_seen if n in sources}
     classes = [checker.source_class(u) for u in cited_urls.values()]
     mix = ", ".join(f"{classes.count(k)} {k}" for k in MIX)
-
     rows = ["# Source check", "", summary, "", f"Source mix: {mix}", "",
             f"Receipts: {rs['parsed']} parsed, {rs['dropped']} not in their snapshot (dropped), {rs['unverified']} "
             f"unverified, {len(rs['unparsed'])} unparsed", *[f"- unparsed: {excerpt(u, 160)}" for u in rs["unparsed"][:5]],
             "", "| id | severity | kind | report excerpt | cited | expected / found | disposition |",
             "|---|---|---|---|---|---|---|"]
-    for i, (f, disp) in enumerate(zip(asked, disps), 1):
-        rows.append(f"| F{i} | {f['severity']} | {f['kind']} | {f['excerpt']} | {', '.join(f['urls']) or '—'} | "
-                    f"{excerpt(f['detail'], 200)} | {disp} |")
+    rows += [f"| F{i} | {f['severity']} | {f['kind']} | {f['excerpt']} | {', '.join(f['urls']) or '—'} | "
+             f"{excerpt(f['detail'], 200)} | {disp} |" for i, (f, disp) in enumerate(zip(asked, disps), 1)]
     rows += ["", "Disposition: fixed / derived / false alarm: <reason> / † (marked unverified, with a footnote).", "",
              "## Low (no answer needed)", "", "| id | kind | report excerpt | cited | expected / found |",
              "|---|---|---|---|---|"]
     rows += [f"| L{i} | {f['kind']} | {f['excerpt']} | {', '.join(f['urls']) or '—'} | {excerpt(f['detail'], 200)} |"
              for i, f in enumerate((f for f in flags if f["severity"] == "low"), 1)]
     write_text(run / "check.md", "\n".join(rows + [""]))
-
     path = run / "evidence.md" if (run / "evidence.md").exists() else report_path  # never both
     old_text = read_text(path)
     updated = CHECK_LINE.sub(lambda m: m.group("pre") + summary, old_text)
-    if path != report_path:
-        updated = MIX_LINE.sub(lambda m: m.group("pre") + mix, updated)
+    updated = updated if path == report_path else MIX_LINE.sub(lambda m: m.group("pre") + mix, updated)
     if updated != old_text:
         write_text(path, updated)
     return {"summary": summary, "mix": mix, "flags": flags, "open": open_n, "counts": dict(c),
@@ -739,16 +759,21 @@ def check(run: Path) -> dict:
 
 def check_section(run: Path, sid: str) -> list:
     """Check one researcher draft, sections/<sid>.md, whose citations are `[URL]`; write nothing."""
-    sources, nums = {}, {}
-    def renumber(m):
-        ns = [nums.setdefault(norm_url(u), len(nums) + 1) for u in re.split(r"\s*[,;]\s*", m.group(1))]
-        for n, u in zip(ns, re.split(r"\s*[,;]\s*", m.group(1))):
-            sources.setdefault(n, u)
-        return "[" + ", ".join(map(str, ns)) + "]"
-    body = URL_CITE.sub(renumber, read_text(run / "sections" / f"{sid}.md")).splitlines()
-    checker = Checker(run)
-    checker.scan(body, sources, unused=False)
+    urls = []
+    body = URL_CITE.sub(numberer({}, urls), read_text(run / "sections" / f"{sid}.md")).splitlines()
+    (checker := Checker(run)).scan(body, dict(enumerate(urls, 1)), unused=False)
     return checker.flags
+
+def numberer(nums: dict, urls: list):
+    """A URL_CITE callback: `[URL, URL]` becomes `[n, m]`, numbering new URLs (by norm_url) in order of first use."""
+    def renumber(m):
+        keys = [(norm_url(u), u.rstrip(".,;:")) for u in re.split(r"\s*[,;]\s*", m.group(1))]
+        for key, u in keys:
+            if key not in nums:
+                nums[key] = len(urls) + 1
+                urls.append(u)
+        return "[" + ", ".join(str(nums[k]) for k, _ in keys) + "]"
+    return renumber
 
 PLAN_ID = re.compile(r"^#{2,4}\s+([A-Za-z]{1,3}\d{1,2})\b")
 
@@ -760,7 +785,7 @@ def section_order(run: Path) -> list:
 
 def cmd_assemble(run: Path, title: str = "Sources") -> int:
     """Join the drafts into report.md; `[URL]` citations become `[n]`; sources follow SOURCES_MARK."""
-    secs, nums, urls = run / "sections", {}, []
+    secs, renumber = run / "sections", numberer({}, urls := [])
     if not secs.is_dir():
         print(f"error: sections folder missing: {secs}", file=sys.stderr)
         return 2
@@ -768,18 +793,11 @@ def cmd_assemble(run: Path, title: str = "Sources") -> int:
         if (secs / f"{sid}.md").is_file():
             return read_text(secs / f"{sid}.md").replace("\r\n", "\n").strip()
         print(f"warning: sections/{sid}.md missing", file=sys.stderr)
-    def renumber(m):
-        keys = [(norm_url(u), u.rstrip(".,;:")) for u in re.split(r"\s*[,;]\s*", m.group(1))]
-        for key, u in keys:
-            if key not in nums:
-                nums[key] = len(urls) + 1
-                urls.append(u)
-        return "[" + ", ".join(str(nums[k]) for k, _ in keys) + "]"
     drafts = [t for t in map(part, section_order(run)) if t is not None]
     body = URL_CITE.sub(renumber, "\n\n".join(t for t in [part("_top"), *drafts] if t))
     end, snaps = URL_CITE.sub(renumber, part("_end") or ""), load_snapshots(run)
-    heads = [next((ln.strip() for ln in snaps.get(norm_url(u), "").splitlines() if ln.strip()), "")[:120] for u in urls]
-    entries = [" ".join(filter(None, (f"[{n}]", h, u))) for n, (h, u) in enumerate(zip(heads, urls), 1)]
+    entries = [" ".join(filter(None, (f"[{n}]", first_line(snaps.get(norm_url(u), "")), u)))
+               for n, u in enumerate(urls, 1)]
     blocks = [body, END_MARK + ("\n" + end if end else ""), "\n".join([SOURCES_MARK, f"## {title}", "", *entries])]
     write_text(run / "report.md", "\n\n".join(blocks) + "\n")
     print(f"report.md: {len(drafts)} sections, {len(body.split())} body words, {len(urls)} sources")
@@ -788,9 +806,8 @@ def cmd_assemble(run: Path, title: str = "Sources") -> int:
 def doc_items(text: str) -> tuple:
     """Numbers, citation markers and 4+ word quotes of a report body as (keys, label, unit); sources; sentences."""
     body, sources, end = parse_report(text)
-    body += end
-    items, sents = {"numbers": [], "citations": [], "quotes": []}, sentences(body)
-    for unit in sents + [line.strip() for line in body if HEADING.match(line)]:
+    items, sents = {"numbers": [], "citations": [], "quotes": []}, sentences(body + end)
+    for unit in sents + [line.strip() for line in body + end if HEADING.match(line)]:
         items["numbers"] += [(frozenset(v for v, _ in n.cands), n.text.strip(), unit) for n in numbers(unit)]
         items["citations"] += [(frozenset([c]), f"[{c}]", unit) for m in CITE.finditer(unit)
                                for c in expand_cites(m.group(1))]
@@ -815,8 +832,7 @@ def pair(old, new) -> tuple:
     old, new = list(old), list(new)
     for same in (True, False):
         for item in list(old):
-            hit = next((x for x in new if x[0] & item[0] and (not same or qnorm(x[2]) == qnorm(item[2]))), None)
-            if hit:
+            if hit := next((x for x in new if x[0] & item[0] and (not same or qnorm(x[2]) == qnorm(item[2]))), None):
                 old.remove(item)
                 new.remove(hit)
     return old, new
@@ -831,59 +847,51 @@ def diff(old_text: str, new_text: str) -> list:
         out += [f"{name}: {label} (was in: {excerpt(unit, 120)})" for _, label, unit in lost]
         ok = " (ok)" if kind not in ("numbers", "quotes") else ""  # an edit may add citations, never facts
         out += [f"{kind[:-1]} added{ok}: {label} (in: {excerpt(unit, 120)})" for _, label, unit in added]
-    for n in sorted(set(old_src) | set(new_src)):
-        a, b = old_src.get(n), new_src.get(n)
-        if not a:
-            out.append(f"source [{n}] added (ok): {b}")
-        elif norm_url(a) != (b and norm_url(b)):
-            out.append(f"source [{n}] changed: {a} -> {b or '(none)'}")
+    for n, a, b in ((n, old_src.get(n), new_src.get(n)) for n in sorted(set(old_src) | set(new_src))):
+        if not a or norm_url(a) != (b and norm_url(b)):
+            out.append(f"source [{n}] changed: {a} -> {b or '(none)'}" if a else f"source [{n}] added (ok): {b}")
     return out + detached(old_sents, new_sents)
 
 def main(argv=None) -> int:
     setup_console()
     parser = argparse.ArgumentParser(prog="python scripts/vafer_check.py",
                                      description="Snapshot pages and check a vafer-research report.")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-    fetch_p = sub.add_parser("fetch", help="download pages into <run>/pages")
-    fetch_p.add_argument("run", type=Path)
-    fetch_p.add_argument("urls", nargs="+")
-    check_p = sub.add_parser("check", help="check <run>/report.md, or one draft with --section (offline, advisory)")
-    check_p.add_argument("run", type=Path)
-    check_p.add_argument("--section", metavar="ID", help="check sections/<ID>.md only; writes nothing")
-    asm_p = sub.add_parser("assemble", help="write <run>/report.md from sections/ with numbered citations")
-    asm_p.add_argument("run", type=Path)
-    asm_p.add_argument("--title", default="Sources", help="Sources heading, in the reader's language")
-    diff_p = sub.add_parser("diff", help="compare an edited report with its previous version")
-    diff_p.add_argument("old", type=Path)
-    diff_p.add_argument("new", type=Path)
+    sub, path = parser.add_subparsers(dest="cmd", required=True), {"type": Path}
+    for name, hlp, opts in (
+            ("fetch", "download pages into <run>/pages", [("run", path), ("urls", {"nargs": "+"}), ("--find", {
+                "metavar": "A|B", "help": "also print up to 3 passages per page for these terms"})]),
+            ("find", "print passages for `a|b|c` from the ok snapshots", [("run", path), ("terms", {}),
+                                                                         ("urls", {"nargs": "*"})]),
+            ("check", "check <run>/report.md, or one draft with --section (offline, advisory)", [("run", path), (
+                "--section", {"metavar": "ID", "help": "check sections/<ID>.md only; writes nothing"})]),
+            ("assemble", "write <run>/report.md from sections/ with numbered citations", [("run", path), (
+                "--title", {"default": "Sources", "help": "Sources heading, in the reader's language"})]),
+            ("diff", "compare an edited report with its previous version", [("old", path), ("new", path)])):
+        p = sub.add_parser(name, help=hlp)
+        for opt, kw in opts:
+            p.add_argument(opt, **kw)
     args = parser.parse_args(argv)
-    if args.cmd == "fetch":
-        return cmd_fetch(args.run, args.urls)
-    if args.cmd == "assemble":
-        return cmd_assemble(args.run, args.title)
+    if args.cmd in ("fetch", "find", "assemble"):
+        return (cmd_fetch(args.run, args.urls, args.find) if args.cmd == "fetch" else cmd_assemble(args.run, args.title)
+                if args.cmd == "assemble" else cmd_find(args.run, args.terms, args.urls))
+    need = [args.old, args.new] if args.cmd == "diff" else [args.run / "sections" / f"{args.section}.md"
+                                                             if args.section else args.run / "report.md"]
+    if missing := next((p for p in need if not p.is_file()), None):
+        print(f"error: file missing: {missing}", file=sys.stderr)
+        return 2
     if args.cmd == "diff":
-        if not args.old.is_file() or not args.new.is_file():
-            print(f"error: file missing: {args.old if not args.old.is_file() else args.new}", file=sys.stderr)
-            return 2
         changes = diff(read_text(args.old), read_text(args.new))
         bad = sum("(ok)" not in c for c in changes)  # additions alone pass
         print("\n".join(changes + [f"diff: {bad} problem{'s' if bad != 1 else ''}"
                                     if bad else "diff: clean (numbers, citations, quotes, sources kept)"]))
         return 1 if bad else 0
     if args.section:
-        if not (args.run / "sections" / f"{args.section}.md").is_file():
-            print(f"error: section draft missing: {args.run / 'sections' / args.section}.md", file=sys.stderr)
-            return 2
         flags = check_section(args.run, args.section)
         sev = [f["severity"] for f in flags]
         print(f"section {args.section}: {len(flags)} flags ({sev.count('high')} high, {sev.count('medium')} medium, "
-              f"{sev.count('low')} low)")
-        for f in flags:
-            print(f"{f['severity']} {f['kind']}: {f['excerpt']} — {f['detail']}")
+              f"{sev.count('low')} low)", *(f"{f['severity']} {f['kind']}: {f['excerpt']} — {f['detail']}" for f in flags),
+              sep="\n")
         return 0
-    if not args.run.is_dir() or not (args.run / "report.md").is_file():
-        print(f"error: run folder or report.md missing: {args.run}", file=sys.stderr)
-        return 2
     result = check(args.run)
     print(f"{result['summary']}\nSource mix: {result['mix']}")
     return 0
