@@ -1,6 +1,18 @@
-# Host notes (checked 2026-10-28)
+# Host notes (checked 2026-10-31)
 
 Host tools change. When this file and the session disagree, trust the session.
+
+## Preflight
+
+Do this once, at the start of step 1.
+
+- Resolve the absolute path of the skill folder. Briefs carry it, so the command works from any working directory.
+- Pick the interpreter: the first of `python`, `python3` and `py -3` that runs `--version`. Paste it, with the absolute script path, into every brief.
+- Search mode: on Codex, run one dated query to tell live from cached search. In cached mode, say "cached search" in the first line of your first reply.
+- Subagents: note whether you can spawn them and whether they have web access.
+- Shell with network: note whether the shell can reach the web, so `fetch` can run.
+
+The result sets the fallback mode and the host line.
 
 ## Host line
 
@@ -9,24 +21,27 @@ Open evidence.md with one line: host; search mode; shell, Python and network; su
 ## Claude Code
 
 - WebSearch returns titles, URLs and short written summaries. Summaries are leads, not receipts: open the page. An interactive session has 200 searches, shared with subagents.
-- When the skill itself runs inside a subagent, the harness may refuse new files whose names start with report; write the draft under another name and rename it with the shell.
 - WebFetch returns a small model's answer about the page, not the page. Outside a short list of documentation sites it caps quotes at 125 characters and paraphrases the rest. It reads at most 100,000 characters, decodes every page as UTF-8 (so windows-1254 Turkish pages arrive garbled), splits table rows into cells and cannot read PDFs. Use it to find and skim; take receipts from snapshots.
-- Snapshots: `python scripts/vafer_check.py fetch` through Bash, one batch per researcher. If a page fails (refused, empty, boilerplate from a JavaScript-only site, or a .doc file), read it once with WebFetch and mark its receipts unverified rather than dropping them.
+- Snapshots: `<python> <absolute skill folder>/scripts/vafer_check.py fetch` through Bash, one batch per researcher. If a page fails (refused, empty, boilerplate from a JavaScript-only site, or a .doc file), read it once with WebFetch and mark its receipts unverified rather than dropping them.
 - Spawn fresh `general-purpose` subagents with the Agent tool; several calls in one message run in parallel. If they run in the background, integrate each result as it arrives instead of waiting for all.
+- Permissions: to avoid an approval prompt on every call, allow `WebSearch`, `WebFetch` and `Bash(python* *vafer_check.py*)`, or use auto mode.
 - A user or managed setting can deny WebSearch or WebFetch for every agent. Then there is no web search: reply that the setting blocks research and name it.
 - Headless `claude -p` needs a permission mode that allows the web tools.
 
 ## Codex
 
-- web_search reads a cached index by default. Live results need `codex --search` or web_search = "live". For recent topics, test the mode up front with a dated query and state it in the host line; in cached mode, mark volatile receipts "as indexed".
-- Opened pages arrive as line windows. Copy receipt spans from the window; a window is normal, not a broken capture.
-- Codex spawns subagents when asked in plain words: "spawn one researcher per assignment, wait for all, then integrate their summaries". Subagents inherit the sandbox and approval settings; under `codex exec`, any action that needs a new approval fails.
+- web_search reads a cached index by default. Live results need `-c web_search="live"`. For recent topics, the preflight query tells the mode; state it in the host line, and in cached mode mark volatile receipts "as indexed".
 - The workspace-write sandbox has no shell network by default, so `fetch` fails; `-c sandbox_workspace_write.network_access=true` enables it. `check` needs no network and still runs on the notes.
+- Opened pages arrive as line windows. Copy receipt spans from the window; a window is normal, not a broken capture.
+- Codex spawns subagents when asked in plain words: "spawn one researcher per assignment". Subagents inherit the sandbox and approval settings; under `codex exec`, any action that needs a new approval fails.
+- Event loop: call `wait_agent` on all running ids, handle the first that finishes, `close_agent` it; at most 6 open.
 - Default `codex exec` is read-only: no run folder and no script. Say "nothing saved, no automated check" and use mode D.
 
 ## Windows
 
-Run the script as `python` or `py -3`, not `python3`. Write notes only with the host's file tools, not shell redirection, so the encoding stays UTF-8.
+The interpreter is usually `python` or `py -3`. Write notes only with the host's file tools, not shell redirection, so the encoding stays UTF-8.
+
+The lookup `rg -i -l "<ascii terms>" .vafer/research --glob plan.md` works in PowerShell and in Git Bash, because rg expands the glob itself. A missing `rg` or a missing `.vafer` folder means no earlier run: continue without reuse.
 
 ## Fallback modes
 

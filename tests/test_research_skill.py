@@ -108,6 +108,35 @@ class ResearchSkillTests(unittest.TestCase):
         for command in ("assemble", "--find", "--section"):
             self.assertIn(command, body)
 
+    def test_lookup_has_no_shell_glob_and_names_fallback(self):
+        rg_lines = []
+        for name in ("SKILL.md", "references/reuse.md", "references/hosts.md"):
+            text = (SKILL_DIR / name).read_text(encoding="utf-8")
+            rg_lines += [line for line in text.splitlines() if re.search(r"\brg -", line)]
+        self.assertTrue(rg_lines)
+        for line in rg_lines:
+            self.assertIn("--glob", line)
+            self.assertNotIn("*/", line)
+        hosts = (SKILL_DIR / "references" / "hosts.md").read_text(encoding="utf-8")
+        self.assertIn("no earlier run", hosts)
+
+    def test_codex_live_search_flag(self):
+        compatibility = top_level_fields(split_skill(SKILL_DIR)[0]).get("compatibility", "")
+        hosts = (SKILL_DIR / "references" / "hosts.md").read_text(encoding="utf-8")
+        for text in (compatibility, hosts):
+            self.assertIn('web_search="live"', text)
+            self.assertNotIn("--search", text)
+
+    def test_description_excludes_brainstorming(self):
+        description = top_level_fields(split_skill(SKILL_DIR)[0])["description"]
+        self.assertIn("brainstorming ideas", description)
+        self.assertLessEqual(len(description), MAX_DESCRIPTION_CHARS)
+
+    def test_reuse_has_handoff_rule(self):
+        text = (SKILL_DIR / "references" / "reuse.md").read_text(encoding="utf-8")
+        self.assertIn("from:", text)
+        self.assertIn("[brainstorm]", text)
+
 
 if __name__ == "__main__":
     unittest.main()
