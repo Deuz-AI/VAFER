@@ -164,11 +164,15 @@ class BrainstormSkillTests(unittest.TestCase):
         headless = body_lines("- **Headless**")
         self.assertEqual(len(headless), 1)
         self.assertIn("only if spawning fails", headless[0])
-        self.assertIn("last message", headless[0])
-        save = body_lines("5. **Save**")
-        self.assertEqual(len(save), 1)
-        self.assertIn("before it when headless", save[0])
-        self.assertIn('"not saved"', save[0])  # the answer already said Saved: <path>
+        # a lead cannot tell it runs headless: in a smoke run it answered, saved, then closed with a
+        # note, and claude -p printed only the note; so the save always comes first (2026-10-31)
+        merge = body_lines("4. **Merge**")
+        self.assertEqual(len(merge), 1)
+        self.assertIn("then **save** handoff.md", merge[0])
+        show = body_lines("5. **Show**")
+        self.assertEqual(len(show), 1)
+        self.assertIn("last message", show[0])
+        self.assertIn('"not saved"', show[0])
 
     def test_answer_rules(self):
         answer = section(split_skill(SKILL_DIR)[1], "## The answer")

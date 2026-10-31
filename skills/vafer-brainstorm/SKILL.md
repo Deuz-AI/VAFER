@@ -14,7 +14,7 @@ Five independent agents look at the request from five angles while you run a sho
 
 ## Done when
 
-- One screen in the user's language shows 4–6 missed points (at most 2 per angle), 2–3 other routes, one obvious line, 0–2 decisions and 0–2 research questions.
+- One screen in the user's language shows 4–5 missed points (at most 2 per angle), 2–3 other routes, one obvious line, 0–2 decisions and 0–1 research question.
 - No question came first, unless the request had no topic.
 - handoff.md is saved, or the reply says "not saved".
 
@@ -31,8 +31,8 @@ Five independent agents look at the request from five angles while you run a sho
 3. **Think** (45–110 s). If the request touches a product, price, law, place or recent event, scan meanwhile: at most 3 searches (who already does this; what changed in the past year; the rule or number the decision rests on) and 2 opened pages. Only facts from opened pages get a link. A fact from a search summary alone becomes a Worth researching question. Show at most 2 scan facts.
    - Claude Code: fresh `general-purpose` agents, not forks. Start them, scan, end your turn. On each earlier notification write only "n/5"; at the last, merge: the answer alone.
    - Codex: five `spawn_agent` calls with only their briefs (no `fork_context`), then the scan; `wait_agent`, and `close_agent` each that finishes or stays silent 2 minutes after the others. Without `-c web_search="live"`, search is cached: mark scan facts "cached".
-4. **Merge and show** (25–35 s).
-5. **Save** handoff.md after the answer, or before it when headless; if saving fails, add a line: "not saved".
+4. **Merge** (25–35 s), then **save** handoff.md.
+5. **Show** the answer as your last message; if saving failed, its Saved line says "not saved".
 
 Ask first only when there is no topic: "What should we think about? A sentence or two is enough.", in English in an empty session. An empty command takes the conversation's topic; unknowns go to Yours to decide. A correction of your guess in the first minute reruns step 2: stop the first wave (`TaskStop`, or `close_agent` on Codex) and count only new replies. Another message before the last reply: merge what has arrived, naming the missing angle; later replies go only into the next save.
 
@@ -49,14 +49,14 @@ Ask first only when there is no topic: "What should we think about? A sentence o
 ## The answer
 
 ```text
-**What you may have missed**   (4-6, at most 2 per angle)
-1. **<point, one sentence>** <why it matters here, naming what it changes>. → <first step, under an hour> <[source](link), (unchecked) on a fact, or nothing>
-**Other routes**   (2-3)
+**What you may have missed**   (4-5, at most 2 per angle)
+1. **<point, one sentence>** <why it matters here, one sentence naming what it changes>. → <first step, under an hour> <[source](link), (unchecked) on a fact, or nothing>
+**Other routes**   (2-3, one line each)
 A. **<route>** — <main trade-off>
 **Obvious, skipped:** <up to six titles>
 **Yours to decide**   (0-2, only if the answer changes a pick)
 - <question> — <what the answer changes>
-**Worth researching:** <question>   (0-2)
+**Worth researching:** <question>   (0-1)
 Saved: <path> · Next: <follow-ups to type now: "deepen 1 and A", "more", "check 2", "research">
 ```
 
@@ -71,7 +71,7 @@ Write handoff.md from `references/next.md` once for the first answer, then only 
 ## Without agents, web or files
 
 - **Single mode** (no subagents, or this skill runs inside an agent): take the five angles yourself, in turn, without showing them; merge as usual.
-- **Headless** (`claude -p`, `codex exec`): agents still reply, so use single mode only if spawning fails. The answer is your last message. No loop or research chain.
+- **Headless** (`claude -p`, `codex exec`): agents still reply, so use single mode only if spawning fails. No loop or research chain.
 - **No web, or a web permission refused:** no scan.
 - **No file writes:** say "not saved"; a handoff passes Goal and Research inline.
 - **An agent fails:** merge without it, name the missing angle, no retry.
