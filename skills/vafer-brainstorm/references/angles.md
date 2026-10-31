@@ -1,10 +1,10 @@
 # Angles
 
-Choose the four details together, so no two angles return the same list: the person, the far field, the horizon and what a route means.
+Choose the four details together so no two angles return the same points: the person, far field, horizon and what a route means.
 
 ## The brief
 
-`{angle, filled}` is the angle's name, job and detail from the table; Blind spots also gets the list.
+`{angle, filled}` is the angle's name, job and detail below; Blind spots also gets the checklist. An angle's own count replaces "4-5". Keep the word brainstorm out of every filled brief, summary included; call this skill the idea module.
 
 ```text
 Today is {date}. A person asked an assistant:
@@ -19,19 +19,17 @@ Reply in {language}, at most 180 words. Use only what you know: no web, no files
 
 ## The five angles
 
-| Angle | Job | Detail |
-|---|---|---|
-| Routes | 3–5 routes to the goal by different means: much smaller, much bigger, buy it, or do nothing. For a request for ideas, 4–6 ideas; for a choice, a third option. | What a route is: for research, another framing; for a page, a page concept; for a figure, an object whose motion fits the idea. |
-| Blind spots | Listed items the request is silent on that matter here; the plan if the weakest assumption is wrong. | None |
-| Failure | It failed, told as certain: the first warning signs and one failure born of success; for a choice, each option in turn. | The horizon |
-| One person | First encounter with the result: what they want, what stops them, what they do instead. | An ordinary person the request says least about |
-| Far field | 2–3 mechanisms from a distant field that solved this structural problem; no named cases or years. | The far field |
+- **Routes**: 3–5 routes to the goal by different means: much smaller, much bigger, buy it, or do nothing. For a request for ideas, 4–6 ideas; for a choice, a third option. Detail: what a route is (research: another framing; page: a page concept; figure: an object whose motion fits the idea).
+- **Blind spots**: checklist items the request is silent on that matter here, other than alternatives and failure modes; the plan if the weakest assumption is wrong.
+- **Failure**: it failed, told as certain: first warning signs and one failure born of success; for a choice, each option in turn. Detail: the horizon.
+- **One person**: first encounter with the result: what they want, what stops them, what they do instead. Detail: an ordinary person the request says least about.
+- **Far field**: 2–3 mechanisms from a distant field that solved this structural problem; no named cases or years. Detail: the far field; the structural problem, briefly.
 
-What requests often leave out: the goal and its why; who it is for, decides and pays; how and when success is checked; constraints (budget, time, skills, platform, language); current practice and prior art; alternatives (doing nothing, buying, a smaller version); risks and failure modes; assumptions that must hold; dependencies (people, data, systems, approvals); legal, safety and privacy; second-order effects (downstream, at scale, over time).
+Checklist (what requests often leave out): the goal and its why; who it is for, decides and pays; how and when success is checked; constraints (budget, time, skills, platform, language); current practice and prior art; alternatives (doing nothing, buying, a smaller version); risks and failure modes; assumptions that must hold; dependencies (people, data, systems, approvals); legal, safety and privacy; second-order effects (downstream, at scale, over time).
 
 ## Deepen
 
-A deepen brief is the angle brief with these lines in place of lines 4–7, Decided lines added to what is known, and its own word limit. Show at most 120 words per pick: the developer's reply and the strongest objection.
+A deepen brief is the angle brief with lines 4–7 replaced by these, Decided lines added to what is known, and its own word limit. Show at most 120 words per pick: the developer's reply and the strongest objection.
 
 Developer, one per pick, at most 100 words:
 

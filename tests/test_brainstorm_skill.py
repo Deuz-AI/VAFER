@@ -32,10 +32,26 @@ KEY_SENTENCES = (
 )
 HANDOFF_HEADINGS = ["## Goal", "## Missed", "## Options", "## Open questions", "## Research", "## Next"]
 TURKISH_LETTERS = re.compile("[çğışöüÇĞİŞÖÜ]")
+COUNTER_BRIEF = (  # DESIGN section 8, verbatim: an agent assigned the other side brings new thinking
+    "Make the strongest case that it is wrong, does not matter or aims at the wrong goal: the best counter-example "
+    "you know, what it costs that they have not counted, and the one condition under which it still holds. "
+    "Do not balance or concede."
+)
 
 
 def reference(name: str) -> str:
     return (SKILL_DIR / "references" / name).read_text(encoding="utf-8")
+
+
+def body_lines(prefix: str) -> list[str]:
+    """The SKILL.md body lines that start with prefix, ignoring indentation."""
+    return [line.strip() for line in split_skill(SKILL_DIR)[1].splitlines() if line.strip().startswith(prefix)]
+
+
+def section(text: str, heading: str) -> str:
+    """The text under a `## ` heading, up to the next one."""
+    match = re.search(rf"^{re.escape(heading)}\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    return match.group(1) if match else ""
 
 
 def metadata_fields(frontmatter: str) -> dict[str, str]:
@@ -121,6 +137,64 @@ class BrainstormSkillTests(unittest.TestCase):
         self.assertEqual(len(lookup), 1)
         self.assertIn("--glob handoff.md --glob plan.md", lookup[0])
         self.assertRegex(lookup[0], r"missing `rg` or `\.vafer`[^.]*no earlier run")
+        self.assertIn("git root", lookup[0])  # Save puts .vafer there; a session in a subfolder still finds it
+
+    def test_wordings_the_design_relies_on(self):
+        # each of these could be dropped without breaking another test (review 2026-10-31)
+        briefs = fenced_blocks(reference("angles.md"))
+        self.assertTrue(briefs[0].rstrip().endswith("no web, no files. Do not invoke skills or start other agents."))
+        self.assertTrue(any(COUNTER_BRIEF in brief for brief in briefs))
+        body = split_skill(SKILL_DIR)[1]
+        self.assertIn("stay at any p", body)  # blockers survive the p filter
+        self.assertIn("never superpowers", body)  # its brainstorming would interview the user again
+        self.assertIn("`-2` on a collision", body)
+        self.assertIn('-c web_search="live"', body)  # Codex searches a cached index without it
+
+    def test_read_step_feeds_the_tool_less_agents(self):
+        # P1 names this project but points at no file, and the agents read nothing themselves,
+        # so the lead reads what defines it and the summary carries those facts (review 2026-10-31, high)
+        read = body_lines("1. **Read**")
+        self.assertEqual(len(read), 1)
+        self.assertRegex(read[0], r"up to 3 files, those the user pointed at or, [^;]*those that define it;")
+        self.assertIn("facts the request leaves out", read[0])
+
+    def test_headless_runs_agents_and_ends_with_the_answer(self):
+        # claude -p and codex exec deliver agent replies (verified 2026-10-31) but print only the
+        # last message, so there the save comes before the answer (review 2026-10-31, high)
+        headless = body_lines("- **Headless**")
+        self.assertEqual(len(headless), 1)
+        self.assertIn("only if spawning fails", headless[0])
+        self.assertIn("last message", headless[0])
+        save = body_lines("5. **Save**")
+        self.assertEqual(len(save), 1)
+        self.assertIn("before it when headless", save[0])
+        self.assertIn('"not saved"', save[0])  # the answer already said Saved: <path>
+
+    def test_answer_rules(self):
+        answer = section(split_skill(SKILL_DIR)[1], "## The answer")
+        self.assertRegex(fenced_blocks(answer)[0], r"Next: <[^>\n]*deepen")  # follow-ups the user can type now
+        rules = answer.rsplit("```", 1)[-1]
+        self.assertIn("in place of Other routes", rules)  # where ideas or candidate objects go (P4, P5)
+        self.assertIn("No praise", rules)
+        self.assertIn("angle is named only when missing", rules)
+
+    def test_correction_replaces_the_first_wave(self):
+        # five more spawns hit Codex's six-thread cap, and old notifications would inflate "n/5"
+        body = split_skill(SKILL_DIR)[1]
+        self.assertRegex(body, r"reruns step 2: stop the first wave \(`TaskStop`, or `close_agent` on Codex\)")
+        self.assertIn("count only new replies", body)
+
+    def test_filled_briefs_keep_the_word_out(self):
+        # the template test cannot see a filled brief; the summary is where the word slips in
+        prose = re.sub(r"```.*?```", "", reference("angles.md"), flags=re.S)
+        self.assertIn("word brainstorm out of every filled brief", prose)
+        self.assertIn('replaces "4-5"', prose)  # Far field asks for 2-3, Routes for 3-5 or 4-6
+
+    def test_next_md_matches_what_modules_read(self):
+        text = reference("next.md")
+        self.assertRegex(text, r"\*\*anatomy\*\* does not read")  # v0.0.5 leaves anatomy untouched (DESIGN section 12)
+        self.assertIn("(goal: <Goal>", text)  # with nothing saved, the handoff travels inline
+        self.assertIn("no Research item", text)  # research on a point the answer did not list
 
     def test_openai_yaml(self):
         text = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
