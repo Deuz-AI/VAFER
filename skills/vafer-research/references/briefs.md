@@ -44,7 +44,8 @@ Spawn one as soon as a trigger in SKILL.md step 3 appears. In Ultra, also spawn 
 
 ```text
 Read {skill folder}/references/researcher.md first and follow it.
-Today is {date}. Question: {question, verbatim}. Settle one item: {claim or row}.
+Today is {date}. Question: {question, verbatim}. Reader: {who, in which language}. Tier: {tier}.
+Settle one item: {claim or row}.
 What is known: {A: statement, source, rung; B: statement, source, rung or "not opened"}.
 Open the page behind any value you would reject.
 Run folder: {run}. Command: {cmd}. Write receipts to {run}/notes/{id}.md. Write no section file.
@@ -60,4 +61,4 @@ Build the frame before filling it: find the record that enumerates the items plu
 
 - **Finite work** (a book, report, standard or dataset the user supplied or named): assign researchers by structural unit (chapters, sections, tables) and ask each to report what its unit says, with locations, before interpreting it.
 - **No subagents:** run the same briefs yourself, one after another; run the gap-finder pass first and label it a self-check in evidence.md.
-- **Subagents without web:** mode B in `hosts.md`.
+- **Subagents without web** (mode B in `hosts.md`): drop the NO_WEB line, and replace the Start with line (in a follow-up, add a line): "Read these pages with {cmd} fetch: {5–10 URLs}."

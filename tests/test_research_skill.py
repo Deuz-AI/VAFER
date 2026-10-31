@@ -47,6 +47,11 @@ def body_line(prefix: str) -> str:
     return next(line for line in split_skill(SKILL_DIR)[1].splitlines() if line.lstrip().startswith(prefix))
 
 
+def under(text: str, heading: str) -> str:
+    """The text under a `## ` heading, up to the next `## ` heading."""
+    return text.split(f"\n{heading}\n")[1].split("\n## ")[0]
+
+
 class ResearchSkillTests(unittest.TestCase):
     def test_frontmatter_uses_spec_fields_only(self):
         fields = top_level_fields(split_skill(SKILL_DIR)[0])
@@ -218,8 +223,15 @@ class ResearchSkillTests(unittest.TestCase):
             for path in paths:
                 self.assertTrue(path.startswith('"') and path.endswith('"'), f"{name}: {path}")
 
-    def test_permissions_cover_py_launcher(self):
-        self.assertIn("Bash(py *vafer_check.py*)", reference("hosts.md"))
+    def test_permission_rule_anchored_to_script(self):
+        # `python* *vafer_check.py*` also allows `python -c "<code>" vafer_check.py`; Claude Code matches the text
+        # before the first * as written, so the rule names the interpreter (py -3 too) and the quoted script path
+        hosts = reference("hosts.md")
+        rule = next(line for line in hosts.splitlines() if line.startswith("- Permissions:"))
+        self.assertIn('`Bash(<python> "<absolute skill folder>/scripts/vafer_check.py" *)`', rule)
+        self.assertIn("py -3", rule)
+        self.assertNotIn("*vafer_check.py*", hosts)
+        self.assertIn("`Edit(.vafer/**)`", rule)  # Manual mode asks before the first write to .vafer/
 
     def test_background_spawns_end_the_turn(self):
         # Claude Code spawns run in the background; an interactive lead cannot wait for them
@@ -240,6 +252,75 @@ class ResearchSkillTests(unittest.TestCase):
         body = split_skill(SKILL_DIR)[1]
         self.assertIn("On NO_WEB, switch to mode B", body)
         self.assertIn("8 agents in all", body)
+
+    def test_quick_names_codex_search_mode(self):
+        # Quick skipped the preflight and only cached mode was named, so a cached Codex answer went out unmarked
+        quick = under(split_skill(SKILL_DIR)[1], "## Quick")
+        self.assertIn("search-mode query in `references/hosts.md`", quick)
+        preflight = under(reference("hosts.md"), "## Preflight")
+        self.assertIn("a Quick run on Codex does only the search-mode query", preflight)
+        self.assertIn("Name the mode, live or cached search, in the first line of your first reply", preflight)
+
+    def test_quick_plan_is_done(self):
+        # reuse reads a plan with status running as a run that ended early, whose rows are not settled
+        self.assertIn("plan.md (status: done)", under(split_skill(SKILL_DIR)[1], "## Quick"))
+
+    def test_translations_stay_unquoted(self):
+        # a quoted translation is never on the source page, so check flags it as a missing quote
+        self.assertIn("translation in the text without quotation marks, and the quoted original in a footnote",
+                      reference("researcher.md"))
+
+    def test_codex_window_spans_count(self):
+        # unverified receipts never count as evidence, so marking every Codex window span unverified flags every source
+        reading = under(reference("researcher.md"), "## Searching and reading")
+        self.assertIn("WebFetch (spans marked unverified)", reading)
+        self.assertIn("copy spans from the window (no mark", reading)
+        self.assertIn('"as indexed" in cached mode', reading)
+
+    def test_spans_leave_out_passage_line_numbers(self):
+        # fetch --find and find print "N: " before each passage line; a span with it is not in its snapshot
+        receipts = under(reference("researcher.md"), "## Receipts")
+        self.assertIn("leave out the line numbers that `fetch` and `find` print", receipts)
+
+    def test_mode_b_has_a_brief(self):
+        # the briefs had no slot for URLs and still asked for NO_WEB, so a mode B researcher answered NO_WEB again
+        variants = under(reference("briefs.md"), "## Variants")
+        self.assertIn('"Read these pages with {cmd} fetch: {5–10 URLs}."', variants)
+        self.assertIn("drop the NO_WEB line", variants)
+        respawn = body_line("- A researcher that errors")
+        self.assertNotIn("no web", respawn)
+        self.assertIn("NO_WEB switches the run to mode B", respawn)
+
+    def test_followup_brief_names_tier_and_reader(self):
+        # researcher.md sets the search budget by tier, and the reply ends with a sentence for the reader
+        brief = fenced_briefs()["Follow-up"]
+        self.assertIn("Tier: {tier}", brief)
+        self.assertIn("Reader: {who, in which language}", brief)
+
+    def test_section_count_reaches_deep_cap(self):
+        # one researcher per section: a 3–6 cap on sections kept Deep and Ultra from their 10 researchers
+        body = split_skill(SKILL_DIR)[1]
+        self.assertIn("(3–6 sections, up to 10 in Deep and Ultra)", body)
+        self.assertNotIn("sections in all", body)
+
+    def test_source_titles_named(self):
+        # assemble titles a source by its snapshot; the lead needs to know what a readable title is
+        self.assertIn("readable titles (publisher and document name)", body_line("4. **Assemble.**"))
+
+    def test_rules_said_once(self):
+        # the WebFetch fallback lives in researcher.md and the failed-lookup rule in hosts.md
+        self.assertNotIn("Use WebFetch only when", split_skill(SKILL_DIR)[1])
+        self.assertNotIn("WebFetch rule", reference("hosts.md"))
+        finding = under(reference("reuse.md"), "## Finding a run")
+        self.assertNotIn("no earlier run", finding)
+        self.assertIn("`hosts.md`", finding)
+
+    def test_refresh_steps_named(self):
+        # the steps are for a refresh only, while a borrow plans from scratch; plan rows replaced the checklist
+        reuse = reference("reuse.md")
+        self.assertIn("## Refreshing a run", reuse)
+        self.assertNotIn("## On a hit", reuse)
+        self.assertNotIn("checklist", reuse.lower())
 
 
 if __name__ == "__main__":
