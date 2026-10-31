@@ -1,0 +1,13 @@
+{
+  "name": "vafer",
+  "owner": {
+    "name": "Deuz-AI"
+  },
+  "plugins": [
+    {
+      "name": "vafer",
+      "source": "./",
+      "description": "Two skills for Claude Code and Codex: brainstorm shows what your idea may have missed, and research writes a cited, source-checked web report."
+    }
+  ]
+}
