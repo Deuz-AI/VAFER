@@ -4,11 +4,13 @@
 Usage:
   python scripts/vafer_check.py fetch <run> <url> [<url> ...]
   python scripts/vafer_check.py check <run> [--section <id>]
+  python scripts/vafer_check.py assemble <run> [--title "<Sources heading>"]
   python scripts/vafer_check.py diff <old.md> <new.md>
 
 Stdlib only. `check` never touches the network and is advisory (exit 0), except when the run folder,
-report.md or the section draft is missing (exit 2). `check --section` writes nothing. `diff` exits 1 when an edit lost or
-changed a number, citation, quote or source entry, or detached a citation; additions alone pass.
+report.md or the section draft is missing (exit 2). `check --section` writes nothing. `assemble` builds report.md
+out of the sections/ drafts (exit 2 when that folder is missing). `diff` exits 1 when an edit lost or changed a number,
+citation, quote or source entry, or detached a citation; additions alone pass.
 """
 from __future__ import annotations
 
@@ -748,6 +750,41 @@ def check_section(run: Path, sid: str) -> list:
     checker.scan(body, sources, unused=False)
     return checker.flags
 
+PLAN_ID = re.compile(r"^#{2,4}\s+([A-Za-z]{1,3}\d{1,2})\b")
+
+def section_order(run: Path) -> list:
+    """Section ids in plan.md heading order, then other sections/*.md (not _top/_end) by name."""
+    plan = read_text(run / "plan.md").splitlines() if (run / "plan.md").is_file() else []
+    ids = list(dict.fromkeys(m.group(1).lower() for line in plan if (m := PLAN_ID.match(line))))
+    return ids + sorted(p.stem for p in (run / "sections").glob("*.md") if p.stem not in ("_top", "_end", *ids))
+
+def cmd_assemble(run: Path, title: str = "Sources") -> int:
+    """Join the drafts into report.md; `[URL]` citations become `[n]`; sources follow SOURCES_MARK."""
+    secs, nums, urls = run / "sections", {}, []
+    if not secs.is_dir():
+        print(f"error: sections folder missing: {secs}", file=sys.stderr)
+        return 2
+    def part(sid):
+        if (secs / f"{sid}.md").is_file():
+            return read_text(secs / f"{sid}.md").replace("\r\n", "\n").strip()
+        print(f"warning: sections/{sid}.md missing", file=sys.stderr)
+    def renumber(m):
+        keys = [(norm_url(u), u.rstrip(".,;:")) for u in re.split(r"\s*[,;]\s*", m.group(1))]
+        for key, u in keys:
+            if key not in nums:
+                nums[key] = len(urls) + 1
+                urls.append(u)
+        return "[" + ", ".join(str(nums[k]) for k, _ in keys) + "]"
+    drafts = [t for t in map(part, section_order(run)) if t is not None]
+    body = URL_CITE.sub(renumber, "\n\n".join(t for t in [part("_top"), *drafts] if t))
+    end, snaps = URL_CITE.sub(renumber, part("_end") or ""), load_snapshots(run)
+    heads = [next((ln.strip() for ln in snaps.get(norm_url(u), "").splitlines() if ln.strip()), "")[:120] for u in urls]
+    entries = [" ".join(filter(None, (f"[{n}]", h, u))) for n, (h, u) in enumerate(zip(heads, urls), 1)]
+    blocks = [body, END_MARK + ("\n" + end if end else ""), "\n".join([SOURCES_MARK, f"## {title}", "", *entries])]
+    write_text(run / "report.md", "\n\n".join(blocks) + "\n")
+    print(f"report.md: {len(drafts)} sections, {len(body.split())} body words, {len(urls)} sources")
+    return 0
+
 def doc_items(text: str) -> tuple:
     """Numbers, citation markers and 4+ word quotes of a report body as (keys, label, unit); sources; sentences."""
     body, sources, end = parse_report(text)
@@ -813,12 +850,17 @@ def main(argv=None) -> int:
     check_p = sub.add_parser("check", help="check <run>/report.md, or one draft with --section (offline, advisory)")
     check_p.add_argument("run", type=Path)
     check_p.add_argument("--section", metavar="ID", help="check sections/<ID>.md only; writes nothing")
+    asm_p = sub.add_parser("assemble", help="write <run>/report.md from sections/ with numbered citations")
+    asm_p.add_argument("run", type=Path)
+    asm_p.add_argument("--title", default="Sources", help="Sources heading, in the reader's language")
     diff_p = sub.add_parser("diff", help="compare an edited report with its previous version")
     diff_p.add_argument("old", type=Path)
     diff_p.add_argument("new", type=Path)
     args = parser.parse_args(argv)
     if args.cmd == "fetch":
         return cmd_fetch(args.run, args.urls)
+    if args.cmd == "assemble":
+        return cmd_assemble(args.run, args.title)
     if args.cmd == "diff":
         if not args.old.is_file() or not args.new.is_file():
             print(f"error: file missing: {args.old if not args.old.is_file() else args.new}", file=sys.stderr)

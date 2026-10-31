@@ -524,6 +524,88 @@ class QuietCheckTests(RunCase):
         self.assertEqual((self.run / "evidence.md").read_text(encoding="utf-8"), "Source check: pending\n")
 
 
+class AssembleTests(RunCase):
+    """`assemble` builds report.md from sections/ drafts."""
+
+    def setUp(self):
+        super().setUp()
+        (self.run / "sections").mkdir()
+        self.page("https://a.org/x", "\n\nAlpha Agency Report\nFiyat 2,61 TL ve 300 abone.")
+        self.page("https://b.org/y", "Beta Page " + "z" * 200 + "\nNüfus 270.976.")
+        (self.run / "plan.md").write_text("# Plan\n\n## S2 — second\n\n### g1 gap\n\n## S1 first\n\n## S9 missing\n",
+                                          encoding="utf-8")
+        self.section("_top", "# Rapor\n\nKısa cevap [https://b.org/y].")
+        self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x].")
+        self.section("s2", "## İki\n\nNüfus 270.976 [https://b.org/y/]. Yine [https://b.org/y#p3].")
+        self.section("g1", "## Boşluk\n\nAbone 300 [https://a.org/x, https://b.org/y].")
+        self.section("x1", "## Ek\n\nEk bilgi.")
+        self.section("_end", "## Belirsizlikler\n\nBilinmiyor.")
+
+    def section(self, sid, text):
+        (self.run / "sections" / f"{sid}.md").write_text(text + "\n", encoding="utf-8")
+
+    def assemble(self, *extra):
+        out, err = io.StringIO(), io.StringIO()
+        streams, (sys.stdout, sys.stderr) = (sys.stdout, sys.stderr), (out, err)
+        try:
+            self.code = vc.main(["assemble", str(self.run), *extra])
+        finally:
+            sys.stdout, sys.stderr = streams
+        self.out, self.err = out.getvalue(), err.getvalue()
+        path = self.run / "report.md"
+        return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def test_assemble_order_and_markers(self):
+        self.assertEqual(vc.section_order(self.run), ["s2", "g1", "s1", "s9", "x1"])
+        text = self.assemble()
+        self.assertEqual(self.code, 0)
+        order = [text.index(h) for h in ("# Rapor", "## İki", "## Boşluk", "## Bir", "## Ek", vc.END_MARK,
+                                         "## Belirsizlikler", vc.SOURCES_MARK, "## Sources")]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual((text.count(vc.END_MARK), text.count(vc.SOURCES_MARK)), (1, 1))
+        self.assertNotIn("https://a.org/x]", text)
+        self.assertRegex(self.out, r"report\.md: 4 sections, \d+ body words, 2 sources")
+        self.assertIn("s9", self.err)
+
+    def test_assemble_numbering_dedup_normalized_urls(self):
+        text = self.assemble()
+        body = text.split(vc.END_MARK)[0]
+        self.assertIn("Kısa cevap [1]", body)
+        self.assertIn("Nüfus 270.976 [1]. Yine [1]", body)
+        self.assertIn("Abone 300 [2, 1]", body)
+        self.assertIn("Fiyat 2,61 TL [2]", body)
+        self.assertEqual(len(vc.parse_report(text)[1]), 2)
+
+    def test_assemble_sources_titles_and_title_arg(self):
+        text = self.assemble("--title", "Fuentes")
+        tail = text.split(vc.SOURCES_MARK)[1].strip().splitlines()
+        self.assertEqual(tail[0], "## Fuentes")
+        self.assertEqual(tail[2], "[1] " + ("Beta Page " + "z" * 200)[:120] + " https://b.org/y")
+        self.assertEqual(tail[3], "[2] Alpha Agency Report https://a.org/x")
+        _, sources, _ = vc.parse_report(text)
+        self.assertEqual(sources, {1: "https://b.org/y", 2: "https://a.org/x"})
+
+    def test_assemble_rerun_idempotent(self):
+        first = self.assemble()
+        self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x]. Takip sonucu eklendi.")
+        self.assemble()
+        self.section("s1", "## Bir\n\nFiyat 2,61 TL [https://a.org/x].")
+        self.assertEqual(self.assemble(), first)
+        self.assertEqual((first.count(vc.END_MARK), first.count(vc.SOURCES_MARK)), (1, 1))
+
+    def test_assemble_then_check_roundtrip(self):
+        self.assemble()
+        kinds = [f["kind"] for f in vc.check(self.run)["flags"]]
+        self.assertNotIn("dangling", kinds)
+        self.assertNotIn("unused", kinds)
+
+    def test_assemble_missing_sections_exits_2(self):
+        shutil.rmtree(self.run / "sections")
+        self.assertIsNone(self.assemble())
+        self.assertEqual(self.code, 2)
+        self.assertIn("sections", self.err)
+
+
 OLD = ('# R\n\n## Özet\n\nKayıt 4.472 oldu [1]. Kurul "tarifeyi değiştirdi ve yeni dönem başladı" dedi [2-3].\n\n'
        'Source check: x 1 of 2\n\n<!-- vafer:sources -->\n## Kaynaklar\n\n[1] A. https://a.org/1\n[2] B. https://b.org/2\n'
        '[3] C. https://c.org/3\n')
