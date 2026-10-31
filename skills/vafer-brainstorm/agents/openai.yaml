@@ -1,0 +1,4 @@
+interface:
+  display_name: "VAFER Brainstorm"
+  short_description: "Five angles on your idea: what you missed and other routes"
+  default_prompt: "Use $vafer-brainstorm to look at this idea from five angles and show what I may have missed."
