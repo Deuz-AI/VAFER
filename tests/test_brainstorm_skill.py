@@ -6,9 +6,10 @@ from __future__ import annotations
 import re
 import unittest
 
-from skillcheck import ALLOWED_FRONTMATTER, SKILLS, skill_texts, split_skill, top_level_fields, words
+from skillcheck import ALLOWED_FRONTMATTER, REPOSITORY, SKILLS, skill_texts, split_skill, top_level_fields, words
 
 SKILL_DIR = SKILLS / "vafer-brainstorm"
+DESIGN = REPOSITORY / "docs" / "research" / "2026-10-30-v0.0.5-review" / "brainstorm" / "DESIGN.md"
 MAX_SKILL_WORDS = 1000
 MAX_WORDS_BEFORE_FLOW = 250
 MAX_REFERENCE_WORDS = 650
@@ -138,6 +139,7 @@ class BrainstormSkillTests(unittest.TestCase):
         self.assertIn("--glob handoff.md --glob plan.md", lookup[0])
         self.assertRegex(lookup[0], r"missing `rg` or `\.vafer`[^.]*no earlier run")
         self.assertIn("git root", lookup[0])  # Save puts .vafer there; a session in a subfolder still finds it
+        self.assertIn('"<ascii term>|<term>"', lookup[0])  # rg reads several bare words as one phrase
 
     def test_wordings_the_design_relies_on(self):
         # each of these could be dropped without breaking another test (review 2026-10-31)
@@ -173,6 +175,11 @@ class BrainstormSkillTests(unittest.TestCase):
         self.assertEqual(len(show), 1)
         self.assertIn("last message", show[0])
         self.assertIn('"not saved"', show[0])
+        # next.md holds the handoff template, so it is read before that save (review 2026-10-31)
+        self.assertTrue(reference("next.md").split("\n## ")[0].rstrip().endswith(
+            "Read this before you write handoff.md, a follow-up or a module's exact line."))
+        # the wait for agent replies still runs headless; only what needs a later turn does not
+        self.assertIn("No follow-ups or research chain.", headless[0])
 
     def test_answer_rules(self):
         answer = section(split_skill(SKILL_DIR)[1], "## The answer")
@@ -187,6 +194,8 @@ class BrainstormSkillTests(unittest.TestCase):
         body = split_skill(SKILL_DIR)[1]
         self.assertRegex(body, r"reruns step 2: stop the first wave \(`TaskStop`, or `close_agent` on Codex\)")
         self.assertIn("count only new replies", body)
+        # a correction after the first minute must still count, or the merge runs on the old guess
+        self.assertIn("naming the missing angle, corrections as Decided lines;", body)
 
     def test_filled_briefs_keep_the_word_out(self):
         # the template test cannot see a filled brief; the summary is where the word slips in
@@ -199,6 +208,89 @@ class BrainstormSkillTests(unittest.TestCase):
         self.assertRegex(text, r"\*\*anatomy\*\* does not read")  # v0.0.5 leaves anatomy untouched (DESIGN section 12)
         self.assertIn("(goal: <Goal>", text)  # with nothing saved, the handoff travels inline
         self.assertIn("no Research item", text)  # research on a point the answer did not list
+
+    def test_brief_and_handoff_match_the_design_verbatim(self):
+        # DESIGN sections 5 and 8 give both blocks word for word; one changed line in the brief
+        # (say "p below 0.10") changes what all five agents return (review 2026-10-31)
+        design = fenced_blocks(DESIGN.read_text(encoding="utf-8"))
+        self.assertIn(fenced_blocks(reference("angles.md"))[0], design)
+        self.assertIn(next(block for block in fenced_blocks(reference("next.md")) if "## Goal" in block), design)
+
+    def test_answer_shape_and_mechanics_stay_pinned(self):
+        # a review broke one design element at a time and 18 of 20 breaks passed every test (2026-10-31)
+        body = split_skill(SKILL_DIR)[1]
+        answer = section(body, "## The answer")
+        template = fenced_blocks(answer)[0]
+        # lowered from DESIGN section 7's 4-7, 2-4, 0-3 and 0-2 after Opus smoke runs gave 398-437 words
+        # (commits 5801683 and 3974538); a change here is a deliberate one
+        for count in ("(4-5, at most 2 per angle)", "(2-3, one line each)", "(0-2, only if", "(0-1)"):
+            self.assertIn(count, template)
+        rules = answer.rsplit("```", 1)[-1]
+        self.assertIn("at most 350 words; to fit, drop the last missed points or routes, down to the minimums.", rules)
+        self.assertIn('every heading, label and "(unchecked)" included', rules)  # DESIGN section 3 translates it
+        # ideas or objects take the routes' place and must fit the 350 words beside 4 points (P4, P5)
+        self.assertIn("3–6 of at most 20 words, under their own heading, in place of Other routes, with 4 missed points",
+                      rules)
+        self.assertIn("summary or p values", rules)
+        for wording in ("fresh `general-purpose` agents, not forks", "calls without `fork_context`",
+                        "stays silent 2 minutes after the others", 'write only "n/5"',
+                        "Ask first only when there is no topic", "at most 3 searches", "and 2 opened pages"):
+            self.assertIn(wording, body)
+        done = section(body, "## Done when")
+        self.assertTrue(done.strip().startswith("Outside stay-out cases:"))  # case (d) asks "Which function?" first
+        self.assertIn("with The answer's parts and counts", done)  # one place for the counts, ideas included
+        far_field = [line for line in reference("angles.md").splitlines() if line.startswith("- **Far field**")]
+        self.assertEqual(len(far_field), 1)
+        self.assertIn("no named cases or years", far_field[0])  # remembered cases with years invite invention
+        self.assertIn("(at most 3 picks;", reference("next.md"))
+
+    def test_merge_keeps_minimums_and_unsaid_file_facts(self):
+        steps = re.findall(r"^\d\. (.+)$", section(split_skill(SKILL_DIR)[1], "## Merge"), re.M)
+        self.assertEqual(len(steps), 7)  # DESIGN section 7's seven steps, in order
+        self.assertTrue(steps[0].startswith("Pool") and steps[6].startswith("Cut to the template's counts"))
+        # P1: a fact the lead read but the user never said, such as an overlapping installed skill,
+        # can still surface; only what the user said or showed is dropped as known (DESIGN section 2)
+        self.assertIn("file facts the user did not mention", steps[0])
+        self.assertIn("files the user showed", steps[1])
+        # stock routes rate high p, and P5 needs at least 3 candidate objects, all from one angle
+        self.assertIn("Fold missed points that", steps[2])
+        self.assertIn("never below 2 routes or 3 ideas or objects", steps[2])
+
+    def test_scan_is_decided_before_the_status_line_and_cached_search_is_detected(self):
+        launch = body_lines("2. **Launch**")
+        self.assertEqual(len(launch), 1)
+        # the status line names the scan, so the decision comes before it
+        self.assertIn("Scan only if the request touches a product, price, law, place or recent event.", launch[0])
+        self.assertLess(launch[0].index("Scan only if"), launch[0].index("Status line"))
+        # a Codex lead cannot see its launch flags; a dated first search shows whether results are cached
+        codex = body_lines("- Codex:")
+        self.assertEqual(len(codex), 1)
+        self.assertIn("search this week's news on the topic first; if nothing recent returns, mark scan facts", codex[0])
+
+    def test_next_offers_only_what_can_run(self):
+        body = split_skill(SKILL_DIR)[1]
+        self.assertIn("Next: <follow-ups that can run now:", fenced_blocks(section(body, "## The answer"))[0])
+        self.assertEqual(body_lines("- **No vafer-research:**"), ['- **No vafer-research:** never offer "check" or "research".'])
+        self.assertIn("Next names only installed VAFER modules and anatomy, never superpowers.", body)
+        text = reference("next.md")
+        self.assertIn("codex exec '$vafer-research", text)  # in double quotes the shell expands $vafer
+        self.assertIn("each Must cover item as a `[brainstorm]` plan row", text)
+        self.assertIn('"Continue yesterday\'s"', text)
+        follow = [line for line in text.splitlines() if line.startswith('- **"Research", "plan"')]
+        self.assertEqual(len(follow), 1)
+        self.assertIn('("this" is the last pick)', follow[0])
+        self.assertIn("A named module or Quick research runs at once; Standard shows its line, tier and time and waits "
+                      "for yes.", follow[0])
+        self.assertIn("When it starts, set the status to `handed off: <module>`", follow[0])
+        self.assertIn("Show each pick in ≤120 words: **<pick>** How · First test · Against.", text)
+
+    def test_angles_split_the_work(self):
+        text = reference("angles.md")
+        self.assertIn("for a choice, only routes that are neither option", text)  # P3: the two named options are not routes
+        # Routes, Failure and One person own these; the weakest-assumption plan needs a place in the reply
+        self.assertIn("other than alternatives, failure modes and the first encounter; last, the plan if", text)
+        # the brief has no goal slot, and question-shaped requests (P1, P2) leave the goal open
+        self.assertIn("Already known opens with the step 1 goal, marked (guess).", text)
 
     def test_openai_yaml(self):
         text = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
