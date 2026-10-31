@@ -33,7 +33,7 @@ NUM = re.compile(r"(?<![\w.,])(?P<neg>[-−](?=\d))?"
 OPS = re.compile(r"[×*·/÷+−]|(?<![^\W\d_])x(?![^\W\d_])|(?<!\S)-(?!\S)")
 OPMAP = {"×": "*", "*": "*", "·": "*", "x": "*", "/": "/", "÷": "/", "+": "+", "−": "-", "-": "-"}
 QUOTE_RX = re.compile(r'"([^"\n]+)"|“([^”\n]+)”|«([^»\n]+)»|„([^“”\n]+)[“”]')
-RECEIPT = re.compile(r'^\s*[-*+]\s+(?P<fact>.*?)["“„](?P<span>.+)["”“]\s*<?(?P<url>(?:https?:|file:/)//[^\s<>]+)>?')
+RECEIPT = re.compile(r'^\s*[-*+]\s+(?:.*?—\s*(?=["“„]))?.*?["“„](?P<span>.+)["”“]\s*<?(?P<url>(?:https?:|file:/)//[^\s<>]+)>?')
 URL_CITE = re.compile(r"\[((?:https?|file):[^\]\s]+(?:\s*[,;]\s*(?:https?|file):[^\]\s]+)*)\]")  # sections/<id>.md
 *MONTHS, ORDS = (g.split() for g in (  # month names, one group per month (tr en es fr de it pt); ordinal words
     "ocak january jan enero janvier januar gennaio janeiro|şubat february feb febrero février februar febbraio fevereiro|"
@@ -491,7 +491,7 @@ def load_receipts(run: Path, snaps=None) -> tuple:
             key, (label, unverified) = norm_url(m.group("url")), receipt_label(line[m.end():])
             stats["parsed"] += 1
             labels.setdefault(key, []).append((label, unverified))
-            parts = [p for p in map(loose, re.split(r"\[\.\.\.\]|\.\.\.|…", m.group("span"))) if p]
+            parts = [p for p in re.split(r'"?(?:\[\.\.\.\]|\.\.\.|…)"?|"[/,;]?"', loose(m.group("span"))) if p]
             if unverified:
                 stats["unverified"] += 1
             elif key in snaps and not all(p in hay.setdefault(key, loose(snaps[key])) for p in parts):

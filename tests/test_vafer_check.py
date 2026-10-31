@@ -706,6 +706,25 @@ class QuietCheckTests(RunCase):
         self.assertIn("Receipts: 4 parsed, 1 not in their snapshot (dropped), 1 unverified, 1 unparsed",
                       (self.run / "check.md").read_text(encoding="utf-8"))
 
+    def test_receipt_passages_and_quoted_fact_words(self):
+        # Task 8 replay: receipts quoting several passages, or with a quoted word in the fact, were dropped
+        self.page("https://x.org/p", "Report of May 23, 1921. Signed: G. M. FRANKS, E. ROLLETTO, G. VIEG.\n"
+                                     "The hotel opened on 22 January 1938. Its first guests were the ministers.\n"
+                                     "A ship named «Evangelos» carried about 1,800 people from Port Kato.")
+        self.note('- signers — "G. M. FRANKS … E. ROLLETTO … G. VIEG" / "May 23, 1921." https://x.org/p '
+                  '(opened 2026-10-31; primary)\n'
+                  '- opening — "The hotel opened on 22 January 1938" … "Its first guests were" https://x.org/p '
+                  '(opened 2026-10-31; scholarly)\n'
+                  '- two — "about 1,800 people", "first guests" https://x.org/p (opened 2026-10-31; press)\n'
+                  '- ship from "Port Kato" — "a ship named «Evangelos» carried about 1,800 people" https://x.org/p '
+                  '(opened 2026-10-31; press)\n'
+                  '- made up — "first guests" / "were the kings" https://x.org/p (opened 2026-10-31; press)\n')
+        spans, _, stats = vc.load_receipts(self.run, vc.load_snapshots(self.run))
+        self.assertEqual((stats["parsed"], stats["dropped"]), (5, 1))
+        self.assertIn("a ship named «Evangelos» carried about 1,800 people", spans["x.org/p"])
+        self.report("The ship carried about 1,800 people [1].", sources=((1, "https://x.org/p"),))
+        self.assertEqual(self.check()["counts"], {"quoted": 1, "page": 0, "missing": 0, "none": 0})
+
     def test_section_check(self):
         (self.run / "sections").mkdir()
         self.page("https://a.org/x", "Fiyat 2,61 TL ve 300 abone.")
