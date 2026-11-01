@@ -42,7 +42,7 @@ Ask first only when there is no topic: "What should we think about? A sentence o
 1. Pool the agents' points, scan facts and file facts the user did not mention.
 2. Drop what the request, conversation, files the user showed or Decided lines cover.
 3. Fold missed points that repeat an OBVIOUS title or have p ≥ 0.3 into the obvious line; blockers (law, safety, money, a dependency that makes the plan impossible) stay at any p. Routes, ideas or objects fold only on an OBVIOUS title, never below 2 routes or 3 ideas or objects.
-4. Drop points with no "changes" or that would fit another request.
+4. Drop points or questions without "changes" or that would fit another request.
 5. Merge duplicates, keeping the sharpest wording and single-angle points; no "found by two angles" tag.
 6. Order: PREMISE challenges and blockers, points that change the plan, the rest; cheapest to check first in each group.
 7. Cut to the template's counts; the rest go to handoff.md.
@@ -73,7 +73,7 @@ Write handoff.md from `references/next.md` once, then only on a handoff or "save
 
 - **Single mode** (no subagents, or inside an agent): take the five angles yourself, in turn, without showing them; merge as usual.
 - **Headless** (`claude -p`, `codex exec`): agents still reply, so use single mode only if spawning fails. No follow-ups or research chain.
-- **No web or no web permission:** no scan.
+- **No web or web permission:** no scan.
 - **No file writes:** say "not saved"; handoffs go inline.
 - **An agent fails:** merge without it, name the missing angle, no retry.
 - **No vafer-research:** never offer "check" or "research".

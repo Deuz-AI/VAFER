@@ -148,6 +148,8 @@ class BrainstormSkillTests(unittest.TestCase):
         self.assertTrue(any(COUNTER_BRIEF in brief for brief in briefs))
         body = split_skill(SKILL_DIR)[1]
         self.assertIn("stay at any p", body)  # blockers survive the p filter
+        # blind judges (2026-11-01) marked the skill's decision questions GENERIC (audience, years, purpose)
+        self.assertIn('Drop points or questions without "changes" or that would fit another request.', body)
         self.assertIn("never superpowers", body)  # its brainstorming would interview the user again
         self.assertIn("`-2` on a collision", body)
         self.assertIn('-c web_search="live"', body)  # Codex searches a cached index without it
