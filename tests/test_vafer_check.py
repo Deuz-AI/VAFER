@@ -430,6 +430,15 @@ class LabelTests(RunCase):
         self.assertEqual(len(lead), 2)
         self.assertEqual([f["severity"] for f in lead], ["high", "medium"])
 
+    def test_lead_only_claim_with_a_dagger_is_not_flagged(self):
+        # live run 2026-11-01: researchers marked lead-only claims with a dagger as the skill asks, yet 28 of
+        # 37 flags were lead-only on such sentences, and the lead had to answer each one again
+        self.report("## Summary\n\nIt is old† [1].\n\n## Details\n\nIt is regulated [1]. It was renamed† [1].",
+                    sources=((1, WIKI),))
+        self.check()
+        lead = [f for f in self.result["flags"] if f["kind"] == "lead-only"]
+        self.assertEqual([f["excerpt"] for f in lead], ["It is regulated [1]."])
+
     def test_lead_by_receipt_label_and_domain_overridden(self):
         self.note(f'- A — "rate went up" {URL2} (opened 2026-10-28; lead)\n'
                   f'- B — "rate went up" {WIKI} (opened 2026-10-28; scholarly)\n')

@@ -665,7 +665,7 @@ class Checker:
         for sentence in sents:
             cited = self.check_sentence(sentence, sources, borrowed)
             self.note_cites(sentence)
-            if (urls := [sources[n] for n in cited if n in sources]) and all(self.is_lead(u) for u in urls):
+            if "†" not in sentence and (urls := [sources[n] for n in cited if n in sources]) and all(map(self.is_lead, urls)):
                 self.flag("lead-only", sentence, urls, "every cited source is lead-class (wiki, forum, blog, "
                           "aggregator)", "high" if first else None)
     def check_end(self, end, sources):
