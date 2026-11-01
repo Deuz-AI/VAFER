@@ -215,7 +215,7 @@ class ResearchSkillTests(unittest.TestCase):
         # evidence.md's open count changes only when check runs again; a † edit changes the excerpt
         check = body_line("5. **Check.**")
         self.assertIn("disposition column", check)
-        self.assertIn("again until it reports 0 open", check)
+        self.assertIn("once more to confirm", check)  # bounded: a loop until 0 cost 4.8 min live (2026-11-01)
         body = split_skill(SKILL_DIR)[1]
         self.assertIn("0 open flags", body)
         self.assertNotRegex(body, r"\b[1-9]\d* open flags")  # a finished run has none
@@ -500,6 +500,14 @@ class ResearchSkillTests(unittest.TestCase):
                             code = exc.code
                         self.assertEqual((code, calls), (0, [want]), err.getvalue())
 
+
+    def test_check_runs_at_most_twice_and_researchers_settle_lead_only(self):
+        # live run 2026-11-01: the lead ran check five times and answered 16 lead-only flags one by one,
+        # which put 4.8 min between the last research reply and delivery
+        body = split_skill(SKILL_DIR)[1]
+        self.assertIn("Run it at most twice", body)
+        self.assertNotIn("Run it again until", body)
+        self.assertIn("replace a lead-only citation with a higher source or mark the claim †", reference("researcher.md"))
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,7 +28,6 @@ Every researcher and follow-up reads this file. The lead uses the same ladder an
   - health: guideline or review > RCT > observational > opinion;
   - law: label the status (in force, applies from, adopted, proposed, guidance).
 - Conflict types: date, number, name, causation, and definition or scope, whose verdict is "both, by definition". A figure settles a row, or conflicts with another on a number, only when place, period, unit and scope match. When one figure is the other rounded, keep the precise one and say so.
-- A headline claim cited only to a lead needs a higher source or a †.
 
 ## Stopping
 
@@ -46,7 +45,7 @@ Write at most 25 lines to your notes file:
 
 ## Before you reply
 
-If you wrote a section draft, run `{cmd} check "<run>" --section <id>`. Fix what you can: add a citation you hold, correct a figure from its snapshot, replace a lead-only citation. List the rest in your reply.
+If you wrote a section draft, run `{cmd} check "<run>" --section <id>`. Fix what you can: add a citation you hold, correct a figure from its snapshot, replace a lead-only citation with a higher source or mark the claim †. List the rest in your reply.
 
 ## House style
 
