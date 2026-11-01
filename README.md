@@ -204,7 +204,45 @@ High and medium flags need an answer in check.md. Low ones do not.
 
 ## Results
 
-v0.0.5 live results are pending: a research test against the previous version and no skill, and a brainstorm test against no skill, run next.
+Live tests on 2026-11-01, Claude Code 2.1.316 with Opus 5.5, run headless. Full write-ups: `docs/research/2026-10-30-v0.0.5-review/live-research.md` and `.../brainstorm/live-brainstorm.md`.
+
+### vafer-brainstorm
+
+Five prompts were answered three ways: the skill (A), the bare model (B), and the skill without subagents (C). For each prompt, a blind judge labelled every point in the three answers without knowing which was which.
+
+| | Skill (A) | Bare model (B) | Skill, single mode (C) |
+|---|---|---|---|
+| NEW points (specific, not in the request, not wrong) | **50** | 37 | 45 |
+| GENERIC points | **4** | 30 | 9 |
+| WRONG points | 0 | 0 | 2 |
+| Links opened and checked | 4 of 4 support their point | none given | 5 of 7 |
+| Time per answer (median) | 2:07 | 0:30 | 1:43 |
+| Words per answer | 259–326 | 231–444 | 259–345 |
+
+- **Criteria met:** every criterion fixed before the runs passed except one: P5 had 2 GENERIC points, against a limit of 1. Fix ebed765 and one allowed re-run did not change that count.
+- **Triggers:** the explicit command started the skill 5 of 5 times. Two plain build requests did not start it. With superpowers on, it did not turn into an interview.
+- **Codex:** P2 ran on Codex in 3:40 with five agents.
+- **Still open:** the author's D gate, blind marks on the 131 NEW points, is pending.
+
+### vafer-research
+
+The question was "Mudanya'nın tarihi hakkında detaylı bir araştırma raporu istiyorum." Two blind judges each opened the cited pages and checked 14–16 claims per report.
+
+| | v0.0.5 | v0.0.4 | No skill |
+|---|---|---|---|
+| Overall (judge 1 / judge 2) | 7.9 / 8.5 | **8.7 / 9** | 6 / 6.5 |
+| Accuracy | 8 / 8.5 | **9 / 9** | 6.5 / 7 |
+| Readability | **8** / 7.5 | 7 / 7 | 8 / 8 |
+| Values wrongly doubted or rejected | 0 / 2 | 2 / 0 | 3 / 0 |
+| Wall time | 14.3 and 17.2 min | 23.8 min | 7.3 min |
+| Subagents | 8 | 10 | 0 |
+| Cost (API-equivalent) | $11.6–11.8 | $15.1 | $2.2 |
+| Check flags to answer (share real) | 23 (70%) | 36 (47%) | — |
+
+- **Speed and cost:** v0.0.5 is about 40% faster and 25% cheaper than v0.0.4, and its check is quieter and more precise.
+- **Quality:** both judges still ranked v0.0.4's report higher. The depth v0.0.5 gave up was the gap-wave researchers and the editor, and v0.0.4's extra searching found academic papers that v0.0.5 missed.
+- **Time target:** the 13-minute target was not met. Most of the overrun is the lead's serial work after the last research reply.
+- **After the runs:** commit 74a3772 stops flags on claims already marked †. Re-run offline on the two delivered reports, the flag count falls from 23 to 7 and from 37 to 18. It has not been measured live.
 
 ### Previous results (v0.0.4)
 
