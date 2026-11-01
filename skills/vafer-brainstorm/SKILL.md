@@ -31,11 +31,11 @@ Outside stay-out cases:
 2. **Launch** (25–40 s): send the five briefs in one message; each ends "Do not invoke skills or start other agents." Scan only if the request touches a product, price, law, place or recent event. Status line, in the user's language: "My understanding: <goal> (guess). Five angles and a short web scan; ~3 min.", the scan clause only when scanning.
 3. **Think** (45–110 s), scanning meanwhile: at most 3 searches (who already does this; what changed this year; the rule or number it rests on) and 2 opened pages. Only facts from opened pages get a link. A fact from a search summary alone becomes a Worth researching question. Show at most 2 scan facts.
    - Claude Code: fresh `general-purpose` agents, not forks. Start them, scan, end your turn. On each earlier notification write only "n/5"; at the last, merge: the answer alone.
-   - Codex: five `spawn_agent` calls without `fork_context`, then the scan; `wait_agent`, and `close_agent` each that finishes or stays silent 2 minutes after the others. Without `-c web_search="live"`, search may be cached: search this week's news on the topic first; if nothing recent returns, mark scan facts "cached".
+   - Codex: five `spawn_agent` calls with `fork_turns="none"`, then the scan; `wait_agent`, and `interrupt_agent` any that stays silent 2 minutes after the others. Without `-c web_search="live"`, search may be cached: search this week's news on the topic first; if nothing recent returns, mark scan facts "cached".
 4. **Merge** (25–35 s), then **save** handoff.md.
 5. **Show** the answer as your last message; if saving failed, its Saved line says "not saved".
 
-Ask first only when there is no topic: "What should we think about? A sentence or two is enough.", in English in an empty session. An empty command takes the conversation's topic; unknowns go to Yours to decide. A correction of your guess in the first minute reruns step 2: stop the first wave (`TaskStop`, or `close_agent` on Codex) and count only new replies. Another message before the last reply: merge what has arrived, naming the missing angle, corrections as Decided lines; later replies go only into the next save.
+Ask first only when there is no topic: "What should we think about? A sentence or two is enough.", in English in an empty session. An empty command takes the conversation's topic; unknowns go to Yours to decide. A correction of your guess in the first minute reruns step 2: stop the first wave (`TaskStop`, or `interrupt_agent` on Codex) and count only new replies. Another message before the last reply: merge what has arrived, naming the missing angle, corrections as Decided lines; later replies go only into the next save.
 
 ## Merge
 
@@ -61,7 +61,7 @@ A. **<route>** — <main trade-off, ≤12 words>
 Saved: <path> · Next: <follow-ups that can run now: "deepen 1 and A", "more", "check 2", "research">
 ```
 
-In the user's language, every heading, label and "(unchecked)" included; at most 350 words; to fit, drop the last missed points or routes, down to the minimums. Ideas or objects asked for come first: 3–6 of at most 20 words, under their own heading, in place of Other routes, with 4 missed points. A fact is a number, law, price, product or date. No praise, closing question, summary or p values; an angle is named only when missing, on the Saved line. Next names only installed VAFER modules and anatomy, never superpowers.
+In the user's language, every heading, label and "(unchecked)" included; at most 350 words; to fit, drop the last missed points or routes, down to the minimums. Ideas or objects asked for come first: 3–6 of at most 20 words, under their own heading, in place of Other routes, with 4 missed points. A fact is a number, law, price, product or date. No praise, closing question, summary or p values; an angle is named only when missing, on the Saved line. Next names only installed modules (VAFER's or anatomy), never superpowers.
 
 ## After the answer
 

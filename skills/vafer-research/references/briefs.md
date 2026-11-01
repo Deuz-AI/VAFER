@@ -1,6 +1,6 @@
 # Briefs
 
-A subagent sees only its brief and the files it names, so put everything else in the brief. Send all of a launch's briefs in one message. On Claude Code, use fresh `general-purpose` subagents, not forks. `{cmd}` is the full command, `<python> "<absolute skill folder>/scripts/vafer_check.py"`, with the path in double quotes. `{id}` is lowercase, such as `s1` or `f1`. `{n}` is the tier's search count in `researcher.md`, but 12 when a run has more than 8 sections, so the run stays under the search cap in `hosts.md`.
+A subagent sees only its brief and the files it names, so put everything else in the brief. Send all of a launch's briefs in one message. Use fresh subagents, not forks: `general-purpose` on Claude Code, `fork_turns="none"` on Codex. `{cmd}` is the full command, `<python> "<absolute skill folder>/scripts/vafer_check.py"`, with the path in double quotes. `{id}` is lowercase, such as `s1` or `f1`. `{n}` is the tier's search count in `researcher.md`, but 12 when a run has more than 8 sections, so the run stays under the search cap in `hosts.md`.
 
 ## Gap-finder
 
@@ -47,10 +47,9 @@ Read {skill folder}/references/researcher.md first and follow it.
 Today is {date}. Question: {question, verbatim}. Reader: {who, in which language}. Tier: {tier}.
 Settle each item, with about 8 searches per item: {one claim or row, or a few}.
 What is known: {A: statement, source, rung; B: statement, source, rung or "not opened"}.
-Open the page behind any value you would reject.
-Run folder: {run}. Command: {cmd}. Write receipts to {run}/notes/{id}.md, one file per item. Write no section file.
+Run folder: {run}. Command: {cmd}. Write receipts to {run}/notes/{id}a.md, {id}b.md and so on, one file per item. Write no section file.
 If you have no web search tool, reply only: NO_WEB
-Reply in at most 150 words, per item: the verdict (A, B, both partly, both by definition, or unresolved; for an open row, the value found), the deciding receipt lines, and one sentence a reader can understand.
+Reply in at most 150 words in all, item by item: the verdict (A, B, both partly, both by definition, or unresolved; for an open row, the value found), the deciding receipt lines, and one sentence a reader can understand.
 ```
 
 ## Table variant (lists of about eight items or more)

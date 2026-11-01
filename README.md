@@ -15,7 +15,7 @@ Status: **v0.0.5** (2026-10-31).
 
 For example: `/vafer-brainstorm I'm thinking of putting solar panels on my roof. Does it make sense?`
 
-With the plugin, the command is `/vafer:vafer-brainstorm`. On Codex, it is `$vafer-brainstorm`.
+With the plugin, the command is `/vafer:vafer-brainstorm`. On Codex, with a copied skill folder, it is `$vafer-brainstorm`.
 
 If you also use superpowers: superpowers may take the word 'brainstorm'; use the explicit command.
 

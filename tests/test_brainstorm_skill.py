@@ -190,9 +190,10 @@ class BrainstormSkillTests(unittest.TestCase):
         self.assertIn("angle is named only when missing", rules)
 
     def test_correction_replaces_the_first_wave(self):
-        # five more spawns hit Codex's six-thread cap, and old notifications would inflate "n/5"
+        # five more spawns overrun Codex's agent slots (4 with the lead on codex-cli 0.166.0, which has no
+        # close_agent), and old notifications would inflate "n/5"
         body = split_skill(SKILL_DIR)[1]
-        self.assertRegex(body, r"reruns step 2: stop the first wave \(`TaskStop`, or `close_agent` on Codex\)")
+        self.assertRegex(body, r"reruns step 2: stop the first wave \(`TaskStop`, or `interrupt_agent` on Codex\)")
         self.assertIn("count only new replies", body)
         # a correction after the first minute must still count, or the merge runs on the old guess
         self.assertIn("naming the missing angle, corrections as Decided lines;", body)
@@ -232,8 +233,10 @@ class BrainstormSkillTests(unittest.TestCase):
         self.assertIn("3–6 of at most 20 words, under their own heading, in place of Other routes, with 4 missed points",
                       rules)
         self.assertIn("summary or p values", rules)
-        for wording in ("fresh `general-purpose` agents, not forks", "calls without `fork_context`",
-                        "stays silent 2 minutes after the others", 'write only "n/5"',
+        # codex-cli 0.166.0 forks the lead's whole history when fork_turns is left out: the later angles
+        # would see the earlier briefs and the word brainstorm (final review 2026-11-01)
+        for wording in ("fresh `general-purpose` agents, not forks", 'calls with `fork_turns="none"`',
+                        "`interrupt_agent` any that stays silent 2 minutes after the others", 'write only "n/5"',
                         "Ask first only when there is no topic", "at most 3 searches", "and 2 opened pages"):
             self.assertIn(wording, body)
         done = section(body, "## Done when")
@@ -271,9 +274,12 @@ class BrainstormSkillTests(unittest.TestCase):
         body = split_skill(SKILL_DIR)[1]
         self.assertIn("Next: <follow-ups that can run now:", fenced_blocks(section(body, "## The answer"))[0])
         self.assertEqual(body_lines("- **No vafer-research:**"), ['- **No vafer-research:** never offer "check" or "research".'])
-        self.assertIn("Next names only installed VAFER modules and anatomy, never superpowers.", body)
+        self.assertIn("Next names only installed modules (VAFER's or anatomy), never superpowers.", body)
         text = reference("next.md")
-        self.assertIn("codex exec '$vafer-research", text)  # in double quotes the shell expands $vafer
+        # in double quotes the shell expands $vafer; without the flags search is cached, and a read-only
+        # sandbox with no network leaves research in mode D (README's research command has the same flags)
+        self.assertIn("codex exec -c web_search=\"live\" --sandbox workspace-write "
+                      "-c sandbox_workspace_write.network_access=true '$vafer-research", text)
         self.assertIn("each Must cover item as a `[brainstorm]` plan row", text)
         self.assertIn('"Continue yesterday\'s"', text)
         follow = [line for line in text.splitlines() if line.startswith('- **"Research", "plan"')]

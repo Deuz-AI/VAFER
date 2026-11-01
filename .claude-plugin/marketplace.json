@@ -3,6 +3,7 @@
   "owner": {
     "name": "Deuz-AI"
   },
+  "description": "VAFER's agent skills for Claude Code and Codex, in one plugin.",
   "plugins": [
     {
       "name": "vafer",

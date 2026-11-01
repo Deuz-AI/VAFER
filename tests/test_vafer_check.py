@@ -920,7 +920,9 @@ class AssembleTests(RunCase):
         self.assertEqual(order, sorted(order))
         self.assertEqual((text.count(vc.END_MARK), text.count(vc.SOURCES_MARK)), (1, 1))
         self.assertNotIn("https://a.org/x]", text)
-        self.assertRegex(self.out, r"report\.md: 4 sections, \d+ body words, 2 sources")
+        # every token, title and table included: check's "Body: N words" counts prose only (verifier, 2026-10-31)
+        self.assertRegex(self.out, r"report\.md: 4 sections, \d+ words, 2 sources")
+        self.assertNotIn("body words", self.out)
         self.assertIn("s9", self.err)
 
     def test_assemble_numbering_dedup_normalized_urls(self):
@@ -936,7 +938,8 @@ class AssembleTests(RunCase):
         text = self.assemble("--title", "Fuentes")
         tail = text.split(vc.SOURCES_MARK)[1].strip().splitlines()
         self.assertEqual(tail[0], "## Fuentes")
-        self.assertEqual(tail[2], "[1] " + ("Beta Page " + "z" * 200)[:120] + " https://b.org/y")
+        # a line over 120 characters is no title (arXiv's permission notice was one): the lead names that source
+        self.assertEqual(tail[2], "[1] https://b.org/y")
         self.assertEqual(tail[3], "[2] Alpha Agency Annual Report https://a.org/x")
         _, sources, _ = vc.parse_report(text)
         self.assertEqual(sources, {1: "https://b.org/y", 2: "https://a.org/x"})
@@ -1644,6 +1647,47 @@ class FetchTests(RunCase):
                 + "Reading order paragraph about water tariffs in the city. " * 12)
         lines, _, _ = self.pdf_fetch("pdftotext", body)
         self.assertTrue(lines[0].startswith("ok ") and lines[0].endswith(" Yalova Kaplıcalarının Osmanlı Dönemi"), lines)
+
+    def test_pdf_title_skips_a_line_too_long_for_a_title(self):
+        # arXiv 1706.03762 was titled by its 170-character permission notice (verifier, 2026-10-31)
+        notice = ("Provided proper attribution is provided, Google hereby grants permission to reproduce the tables "
+                  "and figures in this paper solely for use in journalistic or scholarly works.")
+        self.assertGreater(len(notice), 120)
+        lines, _, _ = self.pdf_fetch("pdftotext", f"{notice}\nAttention Is All You Need\n"
+                                     + "Reading order paragraph about water tariffs in the city. " * 12)
+        self.assertTrue(lines[0].endswith(" Attention Is All You Need"), lines)
+        self.assertEqual(vc.first_line("x" * 121 + "\n" + "y" * 120), "y" * 120)
+
+    def refresh_pdf(self, reading, layout=None):
+        """Fetch x.org/doc.pdf again with --refresh; `layout` None means the -layout run times out."""
+        def fake_run(args, **kwargs):
+            if "-layout" in args and layout is None:
+                raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+            Path(args[-1]).write_text(layout if "-layout" in args else reading, encoding="utf-8")
+
+        with mock.patch.object(vc.shutil, "which", lambda name: "pdftotext"), \
+                mock.patch.object(vc.subprocess, "run", fake_run), \
+                mock.patch.object(vc, "urlopen", lambda req, timeout: FakeResponse(b"%PDF-1.4 new", "application/pdf")), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            vc.cmd_fetch(self.run, ["https://x.org/doc.pdf"], None, True)
+        return out.getvalue()
+
+    def test_refresh_drops_a_stale_layout_copy(self):
+        # known open (verifier): load_snapshots appended the old .layout.txt to the refreshed body
+        new = "New reading order paragraph about water tariffs in the city. " * 12
+        rows = "".join(f"İlçe {i}       {1000 + i * 37} abone       2,{i:02} TL/kWh       2026\n" for i in range(30))
+        for case, reading, layout in (("the -layout run times out", new, None),
+                                      ("reading order is now boilerplate", "Kısa\n" * 5, rows)):
+            with self.subTest(case=case):
+                for path in (self.run / "pages").iterdir():
+                    path.unlink()
+                self.pdf_fetch("pdftotext", layout="OLD ROW 2025       yüzde 41       eski tablo satırı\n")
+                self.assertEqual(len(list((self.run / "pages").glob("*.layout.txt"))), 1)
+                self.assertTrue(self.refresh_pdf(reading, layout).startswith("ok "))
+                self.assertEqual(list((self.run / "pages").glob("*.layout.txt")), [])
+                snap = vc.load_snapshots(self.run)["x.org/doc.pdf"]
+                self.assertNotIn("OLD ROW", snap)
+                self.assertIn("New reading order" if layout is None else "İlçe 7       1259 abone", snap)
 
     def test_pdf_title_skips_the_masthead(self):
         # title check 2026-10-31: DergiPark PDFs were titled by their journal masthead, not the article

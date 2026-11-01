@@ -289,6 +289,23 @@ class ResearchSkillTests(unittest.TestCase):
         preflight = under(reference("hosts.md"), "## Preflight")
         self.assertIn("a Quick run on Codex does only the search-mode query", preflight)
         self.assertIn("Name the mode, live or cached search, in the first line of your first reply", preflight)
+        # a Codex smoke (2026-11-01) ran the dated query, could not read it and named no mode; the rule says how
+        self.assertIn("first search this week's news on the topic. Results from the last few days mean live search; "
+                      "none means cached.", preflight)
+
+    def test_codex_agents_start_fresh_and_wait_for_a_slot(self):
+        # codex-cli 0.166.0 forks the lead's whole history unless fork_turns is "none", has no close_agent,
+        # and gives 4 slots with the lead included, so a launch of 4-7 researchers gets spawns refused
+        codex = under(reference("hosts.md"), "## Codex")
+        agents = [line for line in codex.splitlines() if line.startswith("- Agents:")]
+        self.assertEqual(len(agents), 1)
+        for text in ('spawn each with `fork_turns="none"` (older builds: no `fork_context`)',
+                     "spawn the rest as agents finish; a spawn refused for the limit is not a failed researcher",
+                     "`interrupt_agent` (older builds: `close_agent`)"):
+            self.assertIn(text, agents[0])
+        self.assertNotIn("at most 6 open", reference("hosts.md"))
+        self.assertIn('Use fresh subagents, not forks: `general-purpose` on Claude Code, `fork_turns="none"` on Codex.',
+                      reference("briefs.md"))
 
     def test_quick_plan_is_done(self):
         # reuse reads a plan with status running as a run that ended early, whose rows are not settled
@@ -367,7 +384,8 @@ class ResearchSkillTests(unittest.TestCase):
         # the v0.0.4 judge errors C12 and C15 were prose sentences that rejected a value nobody opened
         rule = body_line("9. ")
         self.assertIn("Open the page before you reject a value.", rule)
-        self.assertIn("in a B cell or in prose cites its own page, or takes a †", rule)
+        # check flags every B cell without [n] or †, whatever the verdict, not only a rejected value
+        self.assertIn("Every B cell, and a value rejected in prose, cites its own page or takes a †", rule)
         self.assertNotIn("Every B cell carries", split_skill(SKILL_DIR)[1])  # said once, in rule 9
         self.assertIn("takes a † in prose", under(reference("researcher.md"), "## Ruling"))
 
@@ -382,8 +400,12 @@ class ResearchSkillTests(unittest.TestCase):
     def test_followup_brief_items(self):
         # a follow-up is not a section: its budget is per item, each item gets a notes file, and an open row has a value
         brief = fenced_briefs()["Follow-up"]
-        for text in ("about 8 searches per item", "one file per item", "for an open row, the value found"):
+        for text in ("about 8 searches per item", "for an open row, the value found",
+                     "{run}/notes/{id}a.md, {id}b.md and so on, one file per item",  # one path could not hold several
+                     "at most 150 words in all, item by item"):  # "150 words, per item" read either way
             self.assertIn(text, brief)
+        # researcher.md, which the brief opens with, says it; the brief said it again
+        self.assertNotIn("Open the page behind any value you would reject.", brief)
 
     def test_conflicts_by_scope_rounding_and_rung(self):
         # C12 compared villages of one district with two; C15 was one figure and its rounding; a governorship page
@@ -397,7 +419,10 @@ class ResearchSkillTests(unittest.TestCase):
 
     def test_find_line_numbers_lead_to_the_snapshot(self):
         # find cuts a long line with …; its numbers are the snapshot file's, so the full span is one read away
-        self.assertIn("read that line in `pages/<file>.txt`", under(reference("researcher.md"), "## Receipts"))
+        receipts = under(reference("researcher.md"), "## Receipts")
+        self.assertIn("read that line in `pages/<file>.txt` (`fetch` names it)", receipts)  # find heads passages by URL
+        # pdftotext's reading order lists a table column by column; check also reads the layout copy
+        self.assertIn("a PDF's rows are in `pages/<file>.layout.txt`", receipts)
 
     def test_lead_paths_without_a_shell_or_folder(self):
         # the lookup rule sat under Windows, though rg can be missing anywhere; without a shell, assemble had no stand-in
@@ -408,6 +433,9 @@ class ResearchSkillTests(unittest.TestCase):
         no_shell = next(line for line in hosts.splitlines() if line.startswith("- **E, no shell:**"))
         for marker in ("<!-- vafer:end -->", "<!-- vafer:sources -->", "manual check"):
             self.assertIn(marker, no_shell)
+        # the researchers have no shell either, so their brief cannot carry {cmd}
+        self.assertIn("In the briefs, drop the Command line: researchers read pages with WebFetch (spans marked "
+                      "unverified) and skip check --section.", no_shell)
         self.assertIn("Without a shell, use mode E in `references/hosts.md`.", split_skill(SKILL_DIR)[1])
 
     def test_review_leftovers(self):
@@ -416,7 +444,7 @@ class ResearchSkillTests(unittest.TestCase):
         body = split_skill(SKILL_DIR)[1]
         self.assertIn("mark its rows in plan.md", body)
         self.assertIn("8 agents in all, gap-finder and respawns included", body)
-        self.assertNotIn("Codex keeps at most 6 open", body)  # hosts.md's event loop says it
+        self.assertNotIn("Codex keeps at most 6 open", body)  # hosts.md's Agents line gives Codex's slots
         self.assertNotIn("as_of", reference("reuse.md"))
         self.assertNotIn("before the first `*`", reference("hosts.md"))
         self.assertIn("A `*` stands for any text", reference("hosts.md"))

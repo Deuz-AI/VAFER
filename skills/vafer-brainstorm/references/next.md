@@ -55,7 +55,7 @@ Offer a module only when the skill list shows it, and write its command as the l
 - Claude Code: `/vafer-research <Tier>: <Q> (handoff: <path>)`, or `/vafer:vafer-research` with the plugin `vafer`.
 - Codex: `$vafer-research`, or `$vafer:vafer-research` with the plugin (a form not yet checked).
 
-With nothing saved, end the command with `(goal: <Goal>; scope: <Scope>; must cover: <items>)` in place of `(handoff: <path>)`. Another installed module gets its own command with the goal, the chosen option and, if it reads handoffs, `(handoff: <path>)`. When headless, Next gives one full command, on Codex single-quoted: `codex exec '$vafer-research …'`. Without vafer-research, a Worth researching item stays a question.
+With nothing saved, end the command with `(goal: <Goal>; scope: <Scope>; must cover: <items>)` in place of `(handoff: <path>)`. Another installed module gets its own command with the goal, the chosen option and, if it reads handoffs, `(handoff: <path>)`. When headless, Next gives one full command, on Codex single-quoted: `codex exec -c web_search="live" --sandbox workspace-write -c sandbox_workspace_write.network_access=true '$vafer-research …'`.
 
 ## Follow-ups
 

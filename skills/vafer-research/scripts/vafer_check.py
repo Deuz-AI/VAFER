@@ -256,9 +256,9 @@ def save(path: Path, data) -> None:
 def snap_head(path: Path) -> tuple:  # (header dict, body) of a snapshot; an empty header when it has none
     head, _, body = (text := read_text(path).replace("\r\n", "\n")).partition("\n\n")
     return (dict(ln.partition(": ")[::2] for ln in head.splitlines()), body) if text.startswith("URL:") else ({}, text)
-def first_line(body: str) -> str:  # a title: the first 20+ character line, URLs removed, not chrome or a masthead
-    return next((t[:120].rstrip() for ln in body.splitlines()
-                 if len(t := squash(URL_RX.sub(" ", ln))) >= 20 and not JUNK.search(t)), "")
+def first_line(body: str) -> str:  # a title: the first 20-120 character line, URLs removed, not chrome or a masthead
+    return next((t for ln in body.splitlines()
+                 if 20 <= len(t := squash(URL_RX.sub(" ", ln))) <= 120 and not JUNK.search(t)), "")
 def ok_snapshot(path: Path):  # (status, file, chars, title, "(cached <date>)") of an ok snapshot at `path`, else None
     with contextlib.suppress(OSError):  # Windows refuses to open a file that is being replaced
         if path.exists() and (head := (old := snap_head(path))[0]).get("Status") == "ok":  # its title was set at fetch
@@ -286,8 +286,8 @@ def fetch_one(url: str, pages: Path, refresh: bool = False) -> tuple:  # (status
             if not text or page_status(text) != "ok":  # scanned, or no pdftotext: for a PDF reader
                 save(path.with_suffix(".pdf"), raw)
                 return "pdf-saved", path.with_suffix(".pdf").name, len(raw), ""
-            if layout and charset == "pdf":
-                save(path.with_name(path.stem + ".layout.txt"), layout)
+            lay = path.with_name(path.stem + ".layout.txt")  # a refresh without a new copy drops the old one
+            save(lay, layout) if layout and charset == "pdf" else lay.unlink(missing_ok=True)
         else:
             meta = re.search(rb"<meta[^>]+charset=[\"']?\s*([\w.:-]+)", raw[:8192], re.I)
             text, charset = decode_bytes(raw, [header_cs, meta and meta.group(1).decode("ascii", "ignore")])
@@ -807,7 +807,7 @@ def cmd_assemble(run: Path, title: str = "Sources") -> int:
     edited = out.is_file() and (not copy.is_file() or read_text(out).splitlines() != read_text(copy).splitlines())
     for path in [copy] if edited else [out, copy]:
         write_text(path, text)
-    print(f"{(copy if edited else out).name}: {len(parts)} sections, {len(body.split())} body words, {len(urls)} sources"
+    print(f"{(copy if edited else out).name}: {len(parts)} sections, {len(body.split())} words, {len(urls)} sources"
           + " (report.md was edited after assembly, so it is kept: carry these changes into it by hand)" * edited)
     return 0
 

@@ -87,6 +87,10 @@ class SuiteHygieneTests(unittest.TestCase):
         self.assertEqual(entry["description"], plugin["description"])
         self.assertRegex(plugin["description"], r"^[^.]+\.$")
         self.assertLess(len(plugin["description"]), MAX_PLUGIN_DESCRIPTION_CHARS)
+        # `claude plugin validate .` warns on a plugin without an author and a marketplace without a description
+        self.assertTrue(plugin.get("author", {}).get("name"))
+        self.assertRegex(marketplace.get("description", ""), r"^[^.]+\.$")
+        self.assertLess(len(marketplace["description"]), MAX_PLUGIN_DESCRIPTION_CHARS)
 
 
 if __name__ == "__main__":

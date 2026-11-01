@@ -2,5 +2,8 @@
   "name": "vafer",
   "version": "0.0.5",
   "description": "Two skills for Claude Code and Codex: brainstorm shows what your idea may have missed, and research writes a cited, source-checked web report.",
+  "author": {
+    "name": "Deuz-AI"
+  },
   "repository": "https://github.com/Deuz-AI/VAFER"
 }

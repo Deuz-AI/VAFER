@@ -616,6 +616,8 @@
 **Files:**
 - Modify: `README.md` (results), `docs/research/2026-10-30-v0.0.5-review/PLAN.md` (checkboxes)
 
-- [ ] **Step 1:** Add the v0.0.5 research and brainstorm results to README.md, with the pending D gate stated as pending.
+- [ ] **Step 1:** Add the v0.0.5 research and brainstorm results to README.md, with the pending D gate stated as pending. Keep "one screen of at most 350 words" in the brainstorm section only if Task 13 counted at most 350 words in every Claude Code answer. Otherwise tighten the answer template, or write "aims for at most 350 words" (final review, 2026-11-01).
 - [ ] **Step 2:** Run `python -m pytest -q tests`. Expected: all pass. Run `git status`. Expected: clean except for `work/`.
-- [ ] **Step 3: Commit** with `git commit -m "docs: v0.0.5 results" -- README.md docs/research/2026-10-30-v0.0.5-review/PLAN.md`, then `git push -u origin vafer-v0.0.5`. Expected: the branch exists on origin.
+- [ ] **Step 3: Commit** with `git commit -m "docs: v0.0.5 results" -- README.md docs/research/2026-10-30-v0.0.5-review/PLAN.md`, then `git push -u origin vafer-v0.0.5` and `git push origin v0.0.3`. README.md names the tag, and it exists only locally. Expected: the branch and the tag exist on origin.
+- [ ] **Step 4: Merge into main** through a pull request, as with PR #1. There are no conflicts, because main's tree equals 5ebab1a. Both plugin routes in README.md read the default branch, which has no `.claude-plugin/` before the merge; until then, `Deuz-AI/VAFER@vafer-v0.0.5` works on both hosts. Before the merge, the author chooses a license: a LICENSE file at the root, or `"license"` in plugin.json. The plugin directory refuses a plugin without one.
+- [ ] **Step 5: Install check.** After the merge, run `/plugin marketplace add Deuz-AI/VAFER` and `/plugin install vafer@vafer` once in a scratch project. Expected: `/vafer:vafer-brainstorm` and `/vafer:vafer-research` are listed. If they are not, correct README.md's install section.
