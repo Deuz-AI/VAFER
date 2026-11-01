@@ -268,7 +268,9 @@ class BrainstormSkillTests(unittest.TestCase):
         # a Codex lead cannot see its launch flags; a dated first search shows whether results are cached
         codex = body_lines("- Codex:")
         self.assertEqual(len(codex), 1)
-        self.assertIn("search this week's news on the topic first; if nothing recent returns, mark scan facts", codex[0])
+        # a live Codex smoke (2026-11-01) found no solar news that week and marked its links cached
+        self.assertIn("search today's date as news first; if nothing from the last few days returns, mark scan facts",
+                      codex[0])
 
     def test_next_offers_only_what_can_run(self):
         body = split_skill(SKILL_DIR)[1]

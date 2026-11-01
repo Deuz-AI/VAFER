@@ -8,7 +8,7 @@ Do this once, at the start of step 1; a Quick run on Codex does only the search-
 
 - Resolve the absolute path of the skill folder. Briefs carry it, so the command works from any working directory.
 - Pick the interpreter: the first of `python`, `python3` and `py -3` that runs `--version`. Paste it, with the absolute script path in double quotes, into every brief.
-- Search mode: on Codex, first search this week's news on the topic. Results from the last few days mean live search; none means cached. Name the mode, live or cached search, in the first line of your first reply.
+- Search mode: on Codex, first search today's date as news, in the user's language. Results from the last few days mean live search; none means cached. Name the mode, live or cached search, beside the checked date in the answer and in the host line.
 - Subagents: note whether you can spawn them and whether they have web access.
 - Shell with network: on Codex, see the sandbox note below; elsewhere assume yes. The first `fetch` tells.
 

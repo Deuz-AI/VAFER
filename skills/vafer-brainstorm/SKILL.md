@@ -31,7 +31,7 @@ Outside stay-out cases:
 2. **Launch** (25–40 s): send the five briefs in one message; each ends "Do not invoke skills or start other agents." Scan only if the request touches a product, price, law, place or recent event. Status line, in the user's language: "My understanding: <goal> (guess). Five angles and a short web scan; ~3 min.", the scan clause only when scanning.
 3. **Think** (45–110 s), scanning meanwhile: at most 3 searches (who already does this; what changed this year; the rule or number it rests on) and 2 opened pages. Only facts from opened pages get a link. A fact from a search summary alone becomes a Worth researching question. Show at most 2 scan facts.
    - Claude Code: fresh `general-purpose` agents, not forks. Start them, scan, end your turn. On each earlier notification write only "n/5"; at the last, merge: the answer alone.
-   - Codex: five `spawn_agent` calls with `fork_turns="none"`, then the scan; `wait_agent`, and `interrupt_agent` any that stays silent 2 minutes after the others. Without `-c web_search="live"`, search may be cached: search this week's news on the topic first; if nothing recent returns, mark scan facts "cached".
+   - Codex: five `spawn_agent` calls with `fork_turns="none"`, then the scan; `wait_agent`, and `interrupt_agent` any that stays silent 2 minutes after the others. Without `-c web_search="live"`, search may be cached: search today's date as news first; if nothing from the last few days returns, mark scan facts "cached".
 4. **Merge** (25–35 s), then **save** handoff.md.
 5. **Show** the answer as your last message; if saving failed, its Saved line says "not saved".
 

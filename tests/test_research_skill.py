@@ -288,10 +288,11 @@ class ResearchSkillTests(unittest.TestCase):
         self.assertIn("search-mode query in `references/hosts.md`", quick)
         preflight = under(reference("hosts.md"), "## Preflight")
         self.assertIn("a Quick run on Codex does only the search-mode query", preflight)
-        self.assertIn("Name the mode, live or cached search, in the first line of your first reply", preflight)
-        # a Codex smoke (2026-11-01) ran the dated query, could not read it and named no mode; the rule says how
-        self.assertIn("first search this week's news on the topic. Results from the last few days mean live search; "
-                      "none means cached.", preflight)
+        # Codex smokes (2026-11-01): the first reply comes before any search, so the mode goes beside the
+        # checked date; a topic's own news can be empty in a live week, so the probe is today's date
+        self.assertIn("Name the mode, live or cached search, beside the checked date in the answer", preflight)
+        self.assertIn("first search today's date as news, in the user's language. Results from the last few days mean "
+                      "live search; none means cached.", preflight)
 
     def test_codex_agents_start_fresh_and_wait_for_a_slot(self):
         # codex-cli 0.166.0 forks the lead's whole history unless fork_turns is "none", has no close_agent,
